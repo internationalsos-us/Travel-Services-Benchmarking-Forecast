@@ -59,6 +59,7 @@ def load_data():
             if req_col in df.columns:
                 rename_dict[req_col] = internal
             else:
+                # Fuzzy match fallback
                 for col in df.columns:
                     if col.lower().replace(' ','').replace('_','') == req_col.lower().replace(' ','').replace('_',''):
                         rename_dict[col] = internal
@@ -68,14 +69,14 @@ def load_data():
         df['AccountID'] = df['AccountID'].astype(str)
         df['Customer_Since'] = pd.to_datetime(df['Customer_Since'], errors='coerce')
         
-        # Ensure columns exist
-        for col in CASE_COLUMNS + UTIL_COLUMNS:
-            if col not in df.columns:
-                df[col] = 0
-            df[col] = df[col].fillna(0)
+        # Ensure numeric columns are actually numeric
+        for col in CASE_COLUMNS + UTIL_COLUMNS + ['Subscribers']:
+             if col in df.columns:
+                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
         df['Total_Cases_Calculated'] = df[CASE_COLUMNS].sum(axis=1)
         
+        # Pre-calculate rates
         if 'Subscribers' in df.columns:
              df['Cases_Per_Subscriber'] = df.apply(lambda x: x['Total_Cases_Calculated'] / x['Subscribers'] if x['Subscribers'] > 0 else 0, axis=1)
              cols_util_sum = [c for c in UTIL_COLUMNS if c in df.columns]
@@ -137,7 +138,7 @@ def get_client_metrics(account_id, raw_df, benchmark_df):
         for col in UTIL_COLUMNS:
             u_rate = client_row[col] / subs
             ui_rate = ind_row[f"{col}_Rate"]
-            diff = ((u_rate - ui_rate)/ui_rate) if ui_rate > 0 else 0 # Keep as decimal for formatting
+            diff = ((u_rate - ui_rate)/ui_rate)*100 if ui_rate > 0 else 0
             util_comp.append({
                 'Metric': col.replace('_',' '), 'Client Rate': u_rate, 
                 'Industry Avg': ui_rate, 'Difference': diff 
@@ -158,13 +159,12 @@ def run_projection(subs, industry, bench_df):
             'Projected Cases': val
         })
     df = pd.DataFrame(projs)
-    df['% of Total'] = (df['Projected Cases']/total) if total > 0 else 0 # Keep as decimal
+    df['% of Total'] = (df['Projected Cases']/total * 100) if total > 0 else 0 # Calc percent here
     return df, total
 
 def get_diff_color(val, invert=False):
-    # Val is decimal here (e.g. 0.1 = 10%)
-    if invert: return BENCHMARK_COLOR_GOOD if val < -0.1 else (BENCHMARK_COLOR_BAD if val > 0.1 else BRAND_COLOR_BLUE)
-    return BENCHMARK_COLOR_GOOD if val > 0.1 else (BENCHMARK_COLOR_BAD if val < -0.1 else BRAND_COLOR_BLUE)
+    if invert: return BENCHMARK_COLOR_GOOD if val < -10 else (BENCHMARK_COLOR_BAD if val > 10 else BRAND_COLOR_BLUE)
+    return BENCHMARK_COLOR_GOOD if val > 10 else (BENCHMARK_COLOR_BAD if val < -10 else BRAND_COLOR_BLUE)
 
 # --- APP LAYOUT ---
 
@@ -202,16 +202,15 @@ if sel_id != "Select here...":
         st.markdown('---')
         
         diff = metrics.get('Case_Load_Diff', 0)
-        # diff is percentage (e.g. 50.0). Color logic expects decimal.
-        color = get_diff_color(diff/100, invert=True)
+        col = get_diff_color(diff, invert=True)
         
         cc1, cc2 = st.columns([1, 2])
         with cc1:
             st.markdown(f"""
             <div style="background-color:#f0f2f6; padding:20px; border-radius:10px; text-align:center;">
                 <h3 style="margin:0; color:{BRAND_COLOR_DARK}">Total Case Load</h3>
-                <h1 style="font-size:48px; margin:10px 0; color:{color}">{abs(diff):.1f}%</h1>
-                <p style="font-size:18px; font-weight:bold; color:{color}">
+                <h1 style="font-size:48px; margin:10px 0; color:{col}">{abs(diff):.1f}%</h1>
+                <p style="font-size:18px; font-weight:bold; color:{col}">
                     {'BELOW' if diff < 0 else 'ABOVE'} Industry Avg
                 </p>
             </div>
@@ -227,24 +226,19 @@ if sel_id != "Select here...":
             
             if not bd_df.empty:
                 tot = bd_df['Cases'].sum()
-                bd_df['% of Total'] = (bd_df['Cases'] / tot) # Decimal 0-1
+                # Calculate % as a number (0-100) and format as string immediately to avoid Streamlit formatting issues
+                bd_df['% of Total'] = (bd_df['Cases'] / tot * 100).map('{:.1f}%'.format)
                 
                 st.subheader("Client Case Breakdown")
                 st.dataframe(
                     bd_df,
-                    column_config={
-                        "% of Total": st.column_config.NumberColumn(
-                            "% of Total",
-                            format="%.1f%%" # Correct format for decimal -> percentage
-                        )
-                    },
                     use_container_width=True,
                     hide_index=True
                 )
             else:
                 st.info("No cases recorded.")
         
-        # --- CHART: Case Rate Comparison with Industry Line ---
+        # --- CHART: Case Rate Comparison ---
         st.write("")
         st.subheader("Client vs. Industry: Case Rate Comparison")
         
@@ -262,26 +256,16 @@ if sel_id != "Select here...":
 
             if not chart_df.empty:
                 fig_compare = go.Figure()
-                
-                # Client Bars
-                fig_compare.add_trace(go.Bar(
-                    x=chart_df['Case Type'], 
-                    y=chart_df['Client Rate (per 1k)'], 
-                    name='Client Rate', 
-                    marker_color=BRAND_COLOR_BLUE
-                ))
+                fig_compare.add_trace(go.Bar(x=chart_df['Case Type'], y=chart_df['Client Rate (per 1k)'], name='Client Rate', marker_color=BRAND_COLOR_BLUE))
                 
                 # Industry Average Line (Red Dashed)
-                # Using Scatter with mode='lines' to draw a line across categories? 
-                # Actually, distinct markers or steps is better for categorical x-axis.
-                # Let's use a Scatter trace connecting points to form a 'trend' line visual
                 fig_compare.add_trace(go.Scatter(
                     x=chart_df['Case Type'], 
                     y=chart_df['Industry Rate (per 1k)'],
                     name='Industry Avg',
                     mode='lines+markers',
-                    line=dict(color='red', width=2, dash='dash'),
-                    marker=dict(color='red', size=8)
+                    line=dict(color='red', width=2, dash='dash'), 
+                    marker=dict(symbol='circle', size=8, color='red')
                 ))
                 
                 fig_compare.update_layout(yaxis_title="Rate per 1k Subscribers", xaxis_title="", legend_title="", barmode='group', height=450)
@@ -293,14 +277,22 @@ if sel_id != "Select here...":
         st.markdown(f'<h3 style="color:{BRAND_COLOR_DARK};">Utilization Analysis</h3>', unsafe_allow_html=True)
         if 'Util_Comparison' in metrics:
             udf = metrics['Util_Comparison']
+            
+            # Pre-format columns to strings to avoid Streamlit formatting errors
+            udf['Client Rate'] = udf['Client Rate'].map('{:.4f}'.format)
+            udf['Industry Avg'] = udf['Industry Avg'].map('{:.4f}'.format)
+            # Apply color styling logic logic before converting to string
+            
+            def style_util(row):
+                val = row['Difference']
+                color = get_diff_color(val, invert=False)
+                return [f'color: {color}; font-weight: bold' if col == 'Difference' else '' for col in row.index]
+
+            # Format difference column as string
+            udf['Difference'] = udf['Difference'].map('{:+.1f}%'.format)
+            
             st.dataframe(
-                udf,
-                column_config={
-                    "Difference": st.column_config.NumberColumn(
-                        "Difference",
-                        format="%.1f%%" # Correct format
-                    )
-                },
+                udf.style.apply(style_util, axis=1),
                 use_container_width=True, 
                 hide_index=True
             )
@@ -372,16 +364,14 @@ if p_ind and p_sub > 0 and not INDUSTRY_BENCHMARKS_DF.empty:
     with m_col: st.metric("Projected Annual Cases", f"{tot_p:,.1f}")
     with t_col: 
         pdf = pdf[pdf['Projected Cases'] > 0.01]
+        # Pre-format as strings to avoid errors
+        pdf['Projected Cases'] = pdf['Projected Cases'].map('{:,.1f}'.format)
+        pdf['% of Total'] = pdf['% of Total'].map('{:.1f}%'.format)
+        
         st.dataframe(
             pdf,
-            column_config={
-                "% of Total": st.column_config.NumberColumn(
-                    "% of Total",
-                    format="%.1f%%"
-                ),
-                "Projected Cases": st.column_config.NumberColumn("Projected Cases", format="%.1f")
-            },
-            use_container_width=True, hide_index=True
+            use_container_width=True,
+            hide_index=True
         )
 
 st.markdown('---')
