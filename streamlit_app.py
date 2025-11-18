@@ -26,23 +26,24 @@ def load_data():
         benchmark_df.columns = benchmark_df.columns.str.strip()
         
         # 2. Identify the Business Industry column and rename it to a guaranteed clean name ('Clean_Industry')
-        # This fixes issues with invisible characters in the column name.
         
-        # Find the column that contains 'Business_Industry' (robust lookup)
-        industry_col_raw = [col for col in raw_df.columns if 'Business_Industry' in col]
-        industry_col_bench = [col for col in benchmark_df.columns if 'Business_Industry' in col]
+        # Find the actual industry column name in the RAW data
+        raw_industry_col = [col for col in raw_df.columns if 'Industry' in col]
         
-        if industry_col_raw and industry_col_bench:
-            raw_df.rename(columns={industry_col_raw[0]: 'Clean_Industry'}, inplace=True)
-            benchmark_df.rename(columns={industry_col_bench[0]: 'Clean_Industry'}, inplace=True)
+        # Find the actual industry column name in the BENCHMARK data
+        bench_industry_col = [col for col in benchmark_df.columns if 'Industry' in col]
+        
+        if raw_industry_col and bench_industry_col:
+            # Force rename both DataFrames to use the guaranteed clean name
+            raw_df.rename(columns={raw_industry_col[0]: 'Clean_Industry'}, inplace=True)
+            benchmark_df.rename(columns={bench_industry_col[0]: 'Clean_Industry'}, inplace=True)
         else:
             # Fallback for error handling if columns still aren't found
-            st.error("Data structure error: Cannot locate 'Business_Industry' column even after initial cleanup.")
+            st.error("Data structure error: Cannot locate 'Business Industry' column even after robust search.")
             return pd.DataFrame(), pd.DataFrame()
         
         # 3. Final data checks
         if 'Clean_Industry' not in raw_df.columns or 'Clean_Industry' not in benchmark_df.columns:
-             # This check should now only fail if the data is genuinely missing
              return pd.DataFrame(), pd.DataFrame()
         
         # Ensure AccountID is string for stable selectbox keying
@@ -70,7 +71,6 @@ def get_client_data(account_id):
     client_data = client_row.to_dict()
     
     # Calculate client's utilization and case rates per subscriber
-    # NOTE: The columns now use 'Clean_Industry'
     RATE_COLS = [col for col in BENCHMARK_DF.columns if 'Per Subscriber' in col]
     
     # Use the 'Subscribers' column from the raw data
@@ -157,7 +157,7 @@ def get_sentiment(diff_percent, is_case_load=False):
         if diff_percent > 10:
             return "High (Good)", BENCHMARK_COLOR_GOOD
         elif diff_percent < -10:
-            return "Low (Caution)", BRAND_COLOR_BAD
+            return "Low (Caution)", BENCHMARK_COLOR_BAD
         else:
             return "On Par", BRAND_COLOR_BLUE
 
