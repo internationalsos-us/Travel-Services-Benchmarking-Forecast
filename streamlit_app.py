@@ -25,7 +25,14 @@ def load_data():
         raw_df.columns = raw_df.columns.str.strip()
         benchmark_df.columns = benchmark_df.columns.str.strip()
         
-        # 2. Identify the Business Industry column and rename it to a guaranteed clean name ('Clean_Industry')
+        # 2. Force rename critical columns to simple, guaranteed names in the RAW data
+        raw_df.rename(columns={
+            # Target the problematic column names explicitly
+            'Total Cases': 'Total_Cases_Clean',
+            'Customer_Since': 'Customer_Since_Clean'
+        }, inplace=True, errors='ignore')
+        
+        # 3. Identify and rename the Business Industry column to a guaranteed clean name ('Clean_Industry')
         raw_industry_col = [col for col in raw_df.columns if 'Industry' in col]
         bench_industry_col = [col for col in benchmark_df.columns if 'Industry' in col]
         
@@ -37,7 +44,7 @@ def load_data():
             st.error("Data structure error: Cannot locate 'Business Industry' column even after robust search.")
             return pd.DataFrame(), pd.DataFrame()
         
-        # 3. Final data checks
+        # 4. Final data checks
         if 'Clean_Industry' not in raw_df.columns or 'Clean_Industry' not in benchmark_df.columns:
              return pd.DataFrame(), pd.DataFrame()
         
@@ -45,7 +52,7 @@ def load_data():
         raw_df['AccountID'] = raw_df['AccountID'].astype(str)
         
         # Convert Customer_Since to datetime
-        raw_df['Customer_Since'] = pd.to_datetime(raw_df['Customer_Since'], errors='coerce')
+        raw_df['Customer_Since_Clean'] = pd.to_datetime(raw_df['Customer_Since_Clean'], errors='coerce')
         
         return raw_df, benchmark_df
     except FileNotFoundError:
@@ -63,7 +70,6 @@ def get_client_data(account_id):
     # Filter the raw data for the selected AccountID
     client_row = RAW_DATA_DF[RAW_DATA_DF['AccountID'] == account_id].iloc[0]
     
-    # --- FINAL FIX: Create a clean dictionary from the client row ---
     # Convert the row to a dictionary, ensuring all keys (column names) are clean strings
     client_data = {key.strip(): value for key, value in client_row.items()}
     
@@ -77,8 +83,15 @@ def get_client_data(account_id):
     for original_col_name in RATE_BASE_COLUMNS:
         rate_col_name = f"{original_col_name} Per Subscriber"
         
-        # Check if the raw data column exists and subscribers > 0
-        raw_value = client_data.get(original_col_name, 0)
+        # --- FIX: Use the CLEANED names for the base columns if they were successfully renamed ---
+        # Note: The 'Total Cases' column name in the raw data is now 'Total_Cases_Clean'
+        
+        if original_col_name == 'Total Cases':
+            raw_value = client_data.get('Total_Cases_Clean', 0)
+        elif original_col_name in client_data:
+            raw_value = client_data.get(original_col_name, 0)
+        else:
+            raw_value = 0
         
         # Ensure the final rate column name is clean (e.g., 'Total Cases Per Subscriber')
         if subscribers > 0 and raw_value != 0:
@@ -176,11 +189,15 @@ def create_case_type_table(client_data):
         'Security cases: Active Monitoring'
     ]
     
+    # We retrieve the values from the client_data dictionary, using the cleaned names for base columns
     table_data = [{'Case Type': c, 'Total Cases': client_data.get(c, 0)} for c in case_types]
+    
+    # We must explicitly look up the Total Cases value using the CLEANED name for calculation
+    total = client_data.get('Total_Cases_Clean', 0)
+    
     df = pd.DataFrame(table_data)
     
     # Calculate percentage contribution
-    total = df['Total Cases'].sum()
     df['% of Total'] = (df['Total Cases'] / total) * 100 if total > 0 else 0
     
     # Clean up names for display
@@ -248,7 +265,7 @@ if selected_account_id:
     benchmarks = benchmark_client(client_data, BENCHMARK_DF)
     
     # Retrieve auto-populated fields
-    customer_since_date = client_data.get('Customer_Since', pd.NaT)
+    customer_since_date = client_data.get('Customer_Since_Clean', pd.NaT)
     customer_since_str = customer_since_date.strftime('%Y-%m-%d') if pd.notna(customer_since_date) else 'N/A'
     
     # 1.2 & 1.3 Auto-populated Fields
