@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
 from datetime import datetime, date
 
 # --- Global Configuration ---
@@ -61,6 +60,7 @@ def benchmark_client(client_data, industry_benchmark_df):
     # Compares client's utilization and case rates against industry average.
     
     industry = client_data['Business_Industry']
+    # Use .loc to ensure we get the correct row by index/label
     industry_row = industry_benchmark_df[industry_benchmark_df['Business_Industry'] == industry].iloc[0]
     
     results = {}
@@ -121,7 +121,7 @@ def get_sentiment(diff_percent, is_case_load=False):
         if diff_percent > 10:
             return "High (Good)", BENCHMARK_COLOR_GOOD
         elif diff_percent < -10:
-            return "Low (Caution)", BRAND_COLOR_BAD
+            return "Low (Caution)", BENCHMARK_COLOR_BAD
         else:
             return "On Par", BRAND_COLOR_BLUE
 
@@ -196,7 +196,7 @@ st.markdown('---')
 # --- FIRST SECTION: Benchmarking ---
 st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">1. Account Benchmarking & Utilization Analysis</h2>', unsafe_allow_html=True)
 
-if RAW_DATA_DF.empty:
+if RAW_DATA_DF.empty or BENCHMARK_DF.empty:
     st.warning("Cannot run the app. Data files are required.")
     st.stop()
 
@@ -293,6 +293,7 @@ if not BENCHMARK_DF.empty:
     # 2.1 & 2.2 Input Fields
     col_proj_ind, col_proj_sub = st.columns(2)
     with col_proj_ind:
+        # This line is the fix: use BENCHMARK_DF directly, as its column names are guaranteed to be correct after the initial data processing.
         industry_list = sorted(BENCHMARK_DF['Business_Industry'].unique().tolist())
         proj_industry = st.selectbox("2.1 Select Business Industry", industry_list)
     with col_proj_sub:
