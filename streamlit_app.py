@@ -16,9 +16,13 @@ BENCHMARK_COLOR_BAD = "#D4002C"
 @st.cache_data
 def load_data():
     try:
-        # Load the pre-processed data files
+        # Load the pre-processed data files (uploaded by user)
         raw_df = pd.read_csv("app_raw_data.csv")
         benchmark_df = pd.read_csv("app_industry_benchmark.csv")
+        
+        # Standardize column names by stripping whitespace (a common CSV issue)
+        raw_df.columns = raw_df.columns.str.strip()
+        benchmark_df.columns = benchmark_df.columns.str.strip()
         
         # Ensure AccountID is string for stable selectbox keying
         raw_df['AccountID'] = raw_df['AccountID'].astype(str)
@@ -42,15 +46,20 @@ def get_client_data(account_id):
     # Filter the raw data for the selected AccountID
     client_row = RAW_DATA_DF[RAW_DATA_DF['AccountID'] == account_id].iloc[0]
     
-    # Calculate client rates per subscriber for utilization and cases
     client_data = client_row.to_dict()
     
     # Calculate client's utilization and case rates per subscriber
     RATE_COLS = [col for col in BENCHMARK_DF.columns if 'Per Subscriber' in col]
+    
+    # Use the 'Subscribers' column from the raw data
+    subscribers = client_data.get('Subscribers', 0)
+    
     for col in RATE_COLS:
-        original_col_name = col.replace(' Per Subscriber', '')
-        if original_col_name in client_data and client_data['Subscribers'] > 0:
-            client_data[col] = client_data[original_col_name] / client_data['Subscribers']
+        # Extract the original column name (e.g., 'Total Cases Per Subscriber' -> 'Total Cases')
+        original_col_name = col.replace(' Per Subscriber', '').strip()
+        
+        if subscribers > 0 and original_col_name in client_data:
+            client_data[col] = client_data[original_col_name] / subscribers
         else:
             client_data[col] = 0
 
@@ -60,8 +69,13 @@ def benchmark_client(client_data, industry_benchmark_df):
     # Compares client's utilization and case rates against industry average.
     
     industry = client_data['Business_Industry']
-    # Use .loc to ensure we get the correct row by index/label
-    industry_row = industry_benchmark_df[industry_benchmark_df['Business_Industry'] == industry].iloc[0]
+    # Use a boolean mask to find the matching industry row safely
+    industry_row_match = industry_benchmark_df[industry_benchmark_df['Business_Industry'] == industry]
+    
+    if industry_row_match.empty:
+        return {'CaseLoad_Diff': 0, 'Util_Comparison': pd.DataFrame()}
+        
+    industry_row = industry_row_match.iloc[0]
     
     results = {}
     
@@ -87,7 +101,7 @@ def benchmark_client(client_data, industry_benchmark_df):
     util_comparison_table = []
     
     for col in utilization_cols:
-        client_rate = client_data[col]
+        client_rate = client_data.get(col, 0)
         industry_rate = industry_row[col]
         
         if industry_rate > 0:
@@ -96,7 +110,7 @@ def benchmark_client(client_data, industry_benchmark_df):
             diff_percent = 0
             
         util_comparison_table.append({
-            'Metric': col.replace(' Per Subscriber', ''),
+            'Metric': col.replace(' Per Subscriber', '').strip(),
             'Client Rate': client_rate,
             'Industry Avg Rate': industry_rate,
             'Difference (%)': diff_percent
@@ -121,13 +135,14 @@ def get_sentiment(diff_percent, is_case_load=False):
         if diff_percent > 10:
             return "High (Good)", BENCHMARK_COLOR_GOOD
         elif diff_percent < -10:
-            return "Low (Caution)", BENCHMARK_COLOR_BAD
+            return "Low (Caution)", BRAND_COLOR_BAD
         else:
             return "On Par", BRAND_COLOR_BLUE
 
 def create_case_type_table(client_data):
     # Creates a table for client's total cases by type.
     
+    # List of all case columns used in the display
     case_types = [
         'Medical Cases', 'Security Cases', 'Travel Cases', 
         'Medical Cases: I&A', 'Medical Cases: Out-Patient', 
@@ -144,7 +159,7 @@ def create_case_type_table(client_data):
     total = df['Total Cases'].sum()
     df['% of Total'] = (df['Total Cases'] / total) * 100 if total > 0 else 0
     
-    # Clean up names
+    # Clean up names for display
     df['Case Type'] = df['Case Type'].str.replace('Cases: ', ' - ').str.replace('cases: ', ' - ')
     
     return df
@@ -208,7 +223,7 @@ if selected_account_id:
     client_data = get_client_data(selected_account_id)
     benchmarks = benchmark_client(client_data, BENCHMARK_DF)
     
-    client_name = client_data.get('Client Name', 'N/A')
+    # Retrieve auto-populated fields
     customer_since_date = client_data.get('Customer_Since', pd.NaT)
     customer_since_str = customer_since_date.strftime('%Y-%m-%d') if pd.notna(customer_since_date) else 'N/A'
     
@@ -265,6 +280,7 @@ if selected_account_id:
     
     def style_util_diff(val):
         sentiment, color = get_sentiment(val, is_case_load=False)
+        # Note: Streamlit styling requires double braces for formatting strings
         return f'color: {color}; font-weight: bold; background-color: #f0fff0' if sentiment == 'High (Good)' else f'color: {color}'
 
     # Format and display utilization table
@@ -293,13 +309,14 @@ if not BENCHMARK_DF.empty:
     # 2.1 & 2.2 Input Fields
     col_proj_ind, col_proj_sub = st.columns(2)
     with col_proj_ind:
-        # This line is the fix: use BENCHMARK_DF directly, as its column names are guaranteed to be correct after the initial data processing.
+        # Correctly accessing 'Business_Industry' from the benchmark DataFrame
         industry_list = sorted(BENCHMARK_DF['Business_Industry'].unique().tolist())
         proj_industry = st.selectbox("2.1 Select Business Industry", industry_list)
     with col_proj_sub:
         proj_subscribers = st.number_input("2.2 Enter Number of Subscribers", min_value=1, value=1000, step=1)
     
     if proj_industry:
+        # Correctly accessing the projection row
         proj_row = BENCHMARK_DF[BENCHMARK_DF['Business_Industry'] == proj_industry].iloc[0]
         
         # Calculate projected cases
