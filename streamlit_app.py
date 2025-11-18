@@ -8,6 +8,7 @@ BRAND_COLOR_BLUE = "#2f4696"
 BRAND_COLOR_DARK = "#232762"
 BENCHMARK_COLOR_GOOD = "#009354"
 BENCHMARK_COLOR_BAD = "#D4002C"
+BRAND_COLOR_ORANGE = "#EF820F" # Ensure this is defined
 
 # --- Column Mapping (Based on your specific instructions A-S) ---
 # Keys are the CSV headers, Values are internal friendly names
@@ -72,7 +73,6 @@ def load_data():
         missing_cols = [col for col in COLUMN_MAP.keys() if col not in df.columns]
         if missing_cols:
             # If exact match fails, try a looser match (case insensitive, ignore underscore differences)
-            # This handles slight variations in the CSV header text
             rename_dict = {}
             for required_col in COLUMN_MAP.keys():
                 if required_col in df.columns:
@@ -176,11 +176,10 @@ def get_client_metrics(account_id, raw_df, benchmark_df):
     client_subs = client_row['Subscribers']
     
     # 2. Get Industry Benchmark Row
-    # Handle case where industry might not be in benchmark (e.g. singular data point)
     if client_industry in benchmark_df['Business_Industry'].values:
         industry_row = benchmark_df[benchmark_df['Business_Industry'] == client_industry].iloc[0]
     else:
-        return None # Should not happen if benchmark is built from raw data
+        return None 
     
     metrics = {
         'Client_Name': str(client_row['AccountID']),
@@ -259,10 +258,10 @@ def run_projection(subscribers, industry, benchmark_df):
 
 # --- Helper for Styling ---
 def get_diff_color(val, invert=False):
-    if invert: # For Cases (Lower is usually better/good, Higher is bad)
+    if invert: 
         if val < -10: return BENCHMARK_COLOR_GOOD
         if val > 10: return BENCHMARK_COLOR_BAD
-    else: # For Utilization (Higher is usually better/good)
+    else: 
         if val > 10: return BENCHMARK_COLOR_GOOD
         if val < -10: return BENCHMARK_COLOR_BAD
     return BRAND_COLOR_BLUE
@@ -297,70 +296,69 @@ selected_id = st.selectbox("1.1 Select Account ID", ids)
 if selected_id:
     metrics = get_client_metrics(selected_id, RAW_DATA_DF, INDUSTRY_BENCHMARKS_DF)
     
-    if metrics:
-        # 1.2/1.3 Display
-        c1, c2, c3 = st.columns(3)
-        c1.text_input("1.2 Business Industry", value=metrics['Industry'], disabled=True)
-        c2.text_input("1.3 Number of Subscribers", value=f"{metrics['Subscribers']:,}", disabled=True)
+    # 1.2/1.3 Display
+    c1, c2, c3 = st.columns(3)
+    c1.text_input("1.2 Business Industry", value=metrics['Industry'], disabled=True)
+    c2.text_input("1.3 Number of Subscribers", value=f"{metrics['Subscribers']:,}", disabled=True)
+    
+    cust_since = metrics['Customer_Since']
+    since_str = cust_since.strftime('%Y-%m-%d') if pd.notna(cust_since) else "N/A"
+    c3.text_input("Customer Since", value=since_str, disabled=True)
+    
+    st.markdown('---')
+    
+    # Summary
+    diff = metrics.get('Case_Load_Diff', 0)
+    color = get_diff_color(diff, invert=True) 
+    
+    c_metric, c_chart = st.columns([1, 2])
+    
+    with c_metric:
+        st.markdown(f"""
+        <div style="background-color:#f0f2f6; padding:20px; border-radius:10px; text-align:center;">
+            <h3 style="margin:0; color:{BRAND_COLOR_DARK}">Total Case Load</h3>
+            <h1 style="font-size:48px; margin:10px 0; color:{color}">{abs(diff):.1f}%</h1>
+            <p style="font-size:18px; font-weight:bold; color:{color}">
+                {'BELOW' if diff < 0 else 'ABOVE'} Industry Avg
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
         
-        cust_since = metrics['Customer_Since']
-        since_str = cust_since.strftime('%Y-%m-%d') if pd.notna(cust_since) else "N/A"
-        c3.text_input("Customer Since", value=since_str, disabled=True)
+    with c_chart:
+        # Create Breakdown DF
+        breakdown_data = []
+        if 'Client_Case_Totals' in metrics:
+            for col, val in metrics['Client_Case_Totals'].items():
+                name = col.replace('Medical_Cases_', 'Med - ').replace('Security_Cases_', 'Sec - ').replace('_', ' ')
+                breakdown_data.append({'Case Type': name, 'Cases': val})
         
-        st.markdown('---')
-        
-        # Summary
-        diff = metrics.get('Case_Load_Diff', 0)
-        color = get_diff_color(diff, invert=True) # Negative diff is Good for cases
-        
-        c_metric, c_chart = st.columns([1, 2])
-        
-        with c_metric:
-            st.markdown(f"""
-            <div style="background-color:#f0f2f6; padding:20px; border-radius:10px; text-align:center;">
-                <h3 style="margin:0; color:{BRAND_COLOR_DARK}">Total Case Load</h3>
-                <h1 style="font-size:48px; margin:10px 0; color:{color}">{abs(diff):.1f}%</h1>
-                <p style="font-size:18px; font-weight:bold; color:{color}">
-                    {'BELOW' if diff < 0 else 'ABOVE'} Industry Avg
-                </p>
-            </div>
-            """, unsafe_allow_html=True)
+        bd_df = pd.DataFrame(breakdown_data)
+        if not bd_df.empty:
+            total_c = bd_df['Cases'].sum()
+            bd_df['%'] = (bd_df['Cases'] / total_c) * 100 if total_c > 0 else 0
             
-        with c_chart:
-            # Create Breakdown DF
-            breakdown_data = []
-            if 'Client_Case_Totals' in metrics:
-                for col, val in metrics['Client_Case_Totals'].items():
-                    name = col.replace('Medical_Cases_', 'Med - ').replace('Security_Cases_', 'Sec - ').replace('_', ' ')
-                    breakdown_data.append({'Case Type': name, 'Cases': val})
-            
-            bd_df = pd.DataFrame(breakdown_data)
-            if not bd_df.empty:
-                total_c = bd_df['Cases'].sum()
-                bd_df['%'] = (bd_df['Cases'] / total_c) * 100 if total_c > 0 else 0
-                
-                st.subheader("Client Case Breakdown")
-                st.dataframe(bd_df.style.format({'%': '{:.1f}%'}), use_container_width=True, hide_index=True)
+            st.subheader("Client Case Breakdown")
+            st.dataframe(bd_df.style.format({'%': '{:.1f}%'}), use_container_width=True, hide_index=True)
 
-        st.write("")
-        st.markdown(f'<h3 style="color:{BRAND_COLOR_DARK};">Utilization Analysis</h3>', unsafe_allow_html=True)
+    st.write("")
+    st.markdown(f'<h3 style="color:{BRAND_COLOR_DARK};">Utilization Analysis</h3>', unsafe_allow_html=True)
+    
+    if 'Util_Comparison' in metrics:
+        util_df = metrics['Util_Comparison']
         
-        if 'Util_Comparison' in metrics:
-            util_df = metrics['Util_Comparison']
-            
-            def style_util(val):
-                color = get_diff_color(val, invert=False) # Positive is Good for utilization
-                return f'color: {color}; font-weight: bold'
+        def style_util(val):
+            color = get_diff_color(val, invert=False) # Positive is Good for utilization
+            return f'color: {color}; font-weight: bold'
 
-            st.dataframe(
-                util_df.style.format({
-                    'Client Rate': '{:.4f}',
-                    'Industry Avg': '{:.4f}',
-                    'Difference (%)': '{:+.1f}%'
-                }).applymap(style_util, subset=['Difference (%)']),
-                use_container_width=True,
-                hide_index=True
-            )
+        st.dataframe(
+            util_df.style.format({
+                'Client Rate': '{:.4f}',
+                'Industry Avg': '{:.4f}',
+                'Difference (%)': '{:+.1f}%'
+            }).applymap(style_util, subset=['Difference (%)']),
+            use_container_width=True,
+            hide_index=True
+        )
 
 st.markdown('---')
 
@@ -401,6 +399,7 @@ if proj_ind and proj_sub and not INDUSTRY_BENCHMARKS_DF.empty:
 
 # --- Footer ---
 st.markdown('---')
+# Note the doubled curly braces {{ and }} for CSS inside f-string
 st.markdown(f"""
 <div style="text-align:center; color:gray; padding:20px;">
     <h3 style="color:{BRAND_COLOR_BLUE}">Value Proposition</h3>
