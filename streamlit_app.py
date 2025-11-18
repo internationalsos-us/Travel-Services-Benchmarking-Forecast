@@ -235,19 +235,33 @@ st.markdown('---')
 st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">2. Correlation: Utilization vs. Case Load</h2>', unsafe_allow_html=True)
 st.write("This chart compares **Total Utilization** against **Total Case Load**. Outliers (top 5%) are removed for clarity.")
 
+# --- Added Industry Filter ---
+industries_list = sorted(RAW_DATA_DF['Business_Industry'].dropna().unique().tolist())
+selected_industry_filter = st.selectbox("Filter Chart by Industry", ["All Industries"] + industries_list)
+
 # Prepare Data for Plot
 plot_df = RAW_DATA_DF[RAW_DATA_DF['Subscribers'] > 0].copy()
 
-# Calculate the 95th percentile for Utilization to filter out extreme "black swans"
-util_cap = plot_df['Utilization_Per_Subscriber'].quantile(0.95)
-plot_df_filtered = plot_df[plot_df['Utilization_Per_Subscriber'] <= util_cap].copy()
+# Filter by Industry if selected
+if selected_industry_filter != "All Industries":
+    plot_df = plot_df[plot_df['Business_Industry'] == selected_industry_filter]
 
-# Add a column to identify the selected client for coloring
-# If the selected client was filtered out (is a black swan), we force add them back
+# Calculate outlier cap based on the *filtered* or *full* dataset (usually better to filter outliers on the view shown)
+if not plot_df.empty:
+    util_cap = plot_df['Utilization_Per_Subscriber'].quantile(0.95)
+    plot_df_filtered = plot_df[plot_df['Utilization_Per_Subscriber'] <= util_cap].copy()
+else:
+    plot_df_filtered = pd.DataFrame()
+
+# Ensure selected client is ALWAYS in the plot, even if filtered by industry or outlier logic
 if sel_id != "Select here...":
-    selected_row = plot_df[plot_df['AccountID'] == str(sel_id)]
+    # Get original row
+    selected_row = RAW_DATA_DF[RAW_DATA_DF['AccountID'] == str(sel_id)]
     if not selected_row.empty:
-         # Ensure selected row is in the filtered set even if it's an outlier, so user can see it
+         # If the current view (industry filter) excludes the client, we might want to show them anyway or just stick to the filter.
+         # Usually, it's better to stick to the filter to avoid confusion, UNLESS the filter is 'All'.
+         # BUT, typically you want to see "Where am I?"
+         # So we force add them if they are missing from the filtered set
          if str(sel_id) not in plot_df_filtered['AccountID'].values:
              plot_df_filtered = pd.concat([plot_df_filtered, selected_row])
 
@@ -257,26 +271,26 @@ else:
     plot_df_filtered['Client_Type'] = 'All Clients'
     color_map = {'All Clients': BRAND_COLOR_BLUE}
 
-# Create Scatter Plot
-fig = px.scatter(
-    plot_df_filtered,
-    x="Utilization_Per_Subscriber",
-    y="Cases_Per_Subscriber",
-    color="Client_Type",
-    color_discrete_map=color_map,
-    hover_data=["AccountID", "Business_Industry", "Subscribers"],
-    title="Higher Utilization vs. Case Rate per Subscriber (Outliers Removed)",
-    labels={
-        "Utilization_Per_Subscriber": "Total Utilization Actions per Subscriber",
-        "Cases_Per_Subscriber": "Total Cases per Subscriber"
-    },
-    height=500
-)
-
-fig.update_traces(marker=dict(size=12, opacity=0.8, line=dict(width=1, color='DarkSlateGrey')))
-fig.update_layout(legend_title_text="")
-
-st.plotly_chart(fig, use_container_width=True)
+if not plot_df_filtered.empty:
+    fig = px.scatter(
+        plot_df_filtered,
+        x="Utilization_Per_Subscriber",
+        y="Cases_Per_Subscriber",
+        color="Client_Type",
+        color_discrete_map=color_map,
+        hover_data=["AccountID", "Business_Industry", "Subscribers"],
+        title=f"Utilization vs. Case Rate ({selected_industry_filter})",
+        labels={
+            "Utilization_Per_Subscriber": "Total Utilization Actions per Subscriber",
+            "Cases_Per_Subscriber": "Total Cases per Subscriber"
+        },
+        height=500
+    )
+    fig.update_traces(marker=dict(size=12, opacity=0.8, line=dict(width=1, color='DarkSlateGrey')))
+    fig.update_layout(legend_title_text="")
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("No data available for this selection.")
 
 st.markdown('---')
 
