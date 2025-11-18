@@ -59,7 +59,7 @@ def load_data():
             if req_col in df.columns:
                 rename_dict[req_col] = internal
             else:
-                # Fuzzy match fallback
+                # Fallback fuzzy match
                 for col in df.columns:
                     if col.lower().replace(' ','').replace('_','') == req_col.lower().replace(' ','').replace('_',''):
                         rename_dict[col] = internal
@@ -69,10 +69,11 @@ def load_data():
         df['AccountID'] = df['AccountID'].astype(str)
         df['Customer_Since'] = pd.to_datetime(df['Customer_Since'], errors='coerce')
         
-        # Ensure numeric columns are actually numeric
+        # Ensure columns exist and fill NaN with 0
         for col in CASE_COLUMNS + UTIL_COLUMNS + ['Subscribers']:
-             if col in df.columns:
-                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+             if col not in df.columns:
+                 df[col] = 0
+             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
         df['Total_Cases_Calculated'] = df[CASE_COLUMNS].sum(axis=1)
         
@@ -159,10 +160,11 @@ def run_projection(subs, industry, bench_df):
             'Projected Cases': val
         })
     df = pd.DataFrame(projs)
-    df['% of Total'] = (df['Projected Cases']/total * 100) if total > 0 else 0 # Calc percent here
+    df['% of Total'] = (df['Projected Cases']/total * 100) if total > 0 else 0
     return df, total
 
 def get_diff_color(val, invert=False):
+    # val is percentage (e.g. 10.0 for 10%)
     if invert: return BENCHMARK_COLOR_GOOD if val < -10 else (BENCHMARK_COLOR_BAD if val > 10 else BRAND_COLOR_BLUE)
     return BENCHMARK_COLOR_GOOD if val > 10 else (BENCHMARK_COLOR_BAD if val < -10 else BRAND_COLOR_BLUE)
 
@@ -226,7 +228,7 @@ if sel_id != "Select here...":
             
             if not bd_df.empty:
                 tot = bd_df['Cases'].sum()
-                # Calculate % as a number (0-100) and format as string immediately to avoid Streamlit formatting issues
+                # Format as string directly to avoid syntax errors in column_config
                 bd_df['% of Total'] = (bd_df['Cases'] / tot * 100).map('{:.1f}%'.format)
                 
                 st.subheader("Client Case Breakdown")
@@ -281,16 +283,18 @@ if sel_id != "Select here...":
             # Pre-format columns to strings to avoid Streamlit formatting errors
             udf['Client Rate'] = udf['Client Rate'].map('{:.4f}'.format)
             udf['Industry Avg'] = udf['Industry Avg'].map('{:.4f}'.format)
-            # Apply color styling logic logic before converting to string
+            
+            # Store raw difference for color logic before formatting
+            diff_values = udf['Difference'].copy()
+            udf['Difference'] = udf['Difference'].map('{:+.1f}%'.format)
             
             def style_util(row):
-                val = row['Difference']
+                # Access original numeric value via index if possible, or re-parse
+                # Better: use the parallel series diff_values
+                val = diff_values[row.name]
                 color = get_diff_color(val, invert=False)
                 return [f'color: {color}; font-weight: bold' if col == 'Difference' else '' for col in row.index]
 
-            # Format difference column as string
-            udf['Difference'] = udf['Difference'].map('{:+.1f}%'.format)
-            
             st.dataframe(
                 udf.style.apply(style_util, axis=1),
                 use_container_width=True, 
