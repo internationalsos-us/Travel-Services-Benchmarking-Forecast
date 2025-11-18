@@ -26,11 +26,7 @@ def load_data():
         benchmark_df.columns = benchmark_df.columns.str.strip()
         
         # 2. Identify the Business Industry column and rename it to a guaranteed clean name ('Clean_Industry')
-        
-        # Find the actual industry column name in the RAW data
         raw_industry_col = [col for col in raw_df.columns if 'Industry' in col]
-        
-        # Find the actual industry column name in the BENCHMARK data
         bench_industry_col = [col for col in benchmark_df.columns if 'Industry' in col]
         
         if raw_industry_col and bench_industry_col:
@@ -38,7 +34,6 @@ def load_data():
             raw_df.rename(columns={raw_industry_col[0]: 'Clean_Industry'}, inplace=True)
             benchmark_df.rename(columns={bench_industry_col[0]: 'Clean_Industry'}, inplace=True)
         else:
-            # Fallback for error handling if columns still aren't found
             st.error("Data structure error: Cannot locate 'Business Industry' column even after robust search.")
             return pd.DataFrame(), pd.DataFrame()
         
@@ -70,22 +65,23 @@ def get_client_data(account_id):
     
     client_data = client_row.to_dict()
     
-    # Get the list of all case and utilization columns from the benchmark data (e.g., 'Total Cases', 'Medical Cases', etc.)
-    # We strip ' Per Subscriber' to get the original raw column names
-    RATE_COL_NAMES = [col.replace(' Per Subscriber', '').strip() 
-                      for col in BENCHMARK_DF.columns if 'Per Subscriber' in col]
+    # Get the list of all base columns that need a 'Per Subscriber' rate calculation
+    # We use the benchmark DF columns to know which rates exist.
+    RATE_BASE_COLUMNS = [col.replace(' Per Subscriber', '').strip() 
+                         for col in BENCHMARK_DF.columns if 'Per Subscriber' in col]
     
     # Use the 'Subscribers' column from the raw data
     subscribers = client_data.get('Subscribers', 0)
     
-    # Calculate client's utilization and case rates per subscriber (This section was fixed)
-    for original_col_name in RATE_COL_NAMES:
+    # Calculate client's utilization and case rates per subscriber (FIX APPLIED HERE)
+    for original_col_name in RATE_BASE_COLUMNS:
         rate_col_name = f"{original_col_name} Per Subscriber"
         
+        # Check if the raw data column exists and subscribers > 0
         if subscribers > 0 and original_col_name in client_data:
             client_data[rate_col_name] = client_data[original_col_name] / subscribers
         else:
-            client_data[rate_col_name] = 0
+            client_data[rate_col_name] = 0 # Default to 0 if data is missing or no subscribers
 
     return client_data
 
@@ -125,6 +121,7 @@ def benchmark_client(client_data, industry_benchmark_df):
     util_comparison_table = []
     
     for col in utilization_cols:
+        # Use .get() for safe dictionary lookup
         client_rate = client_data.get(col, 0)
         industry_rate = industry_row[col]
         
@@ -159,7 +156,7 @@ def get_sentiment(diff_percent, is_case_load=False):
         if diff_percent > 10:
             return "High (Good)", BENCHMARK_COLOR_GOOD
         elif diff_percent < -10:
-            return "Low (Caution)", BRAND_COLOR_BAD
+            return "Low (Caution)", BENCHMARK_COLOR_BAD
         else:
             return "On Par", BRAND_COLOR_BLUE
 
