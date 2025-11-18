@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px  # Added plotly for the chart
+import plotly.express as px
 from datetime import datetime, date
 
 # --- Global Configuration ---
@@ -70,8 +70,6 @@ def load_data():
         df['Total_Cases_Calculated'] = df[CASE_COLUMNS].sum(axis=1)
         
         # Pre-calculate rates for the correlation chart
-        # Use a small epsilon to avoid division by zero for general scatter plot if needed, 
-        # or just filter out 0 subscribers
         df['Cases_Per_Subscriber'] = df.apply(lambda x: x['Total_Cases_Calculated'] / x['Subscribers'] if x['Subscribers'] > 0 else 0, axis=1)
         
         # Calculate a "Total Utilization Score" (sum of all util events) per subscriber
@@ -233,31 +231,41 @@ if sel_id != "Select here...":
 
 st.markdown('---')
 
-# --- NEW SECTION: CORRELATION GRAPH ---
+# --- SECTION 2: CORRELATION GRAPH ---
 st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">2. Correlation: Utilization vs. Case Load</h2>', unsafe_allow_html=True)
-st.write("This chart compares **Total Utilization** (App, Alerts, Advisories, Training) against **Total Case Load** for all accounts. The selected client is highlighted.")
+st.write("This chart compares **Total Utilization** against **Total Case Load**. Outliers (top 5%) are removed for clarity.")
 
 # Prepare Data for Plot
 plot_df = RAW_DATA_DF[RAW_DATA_DF['Subscribers'] > 0].copy()
 
+# Calculate the 95th percentile for Utilization to filter out extreme "black swans"
+util_cap = plot_df['Utilization_Per_Subscriber'].quantile(0.95)
+plot_df_filtered = plot_df[plot_df['Utilization_Per_Subscriber'] <= util_cap].copy()
+
 # Add a column to identify the selected client for coloring
+# If the selected client was filtered out (is a black swan), we force add them back
 if sel_id != "Select here...":
-    plot_df['Client_Type'] = plot_df['AccountID'].apply(lambda x: 'Selected Client' if str(x) == str(sel_id) else 'Other Clients')
-    # Custom color map: Selected = Orange, Others = Blue
+    selected_row = plot_df[plot_df['AccountID'] == str(sel_id)]
+    if not selected_row.empty:
+         # Ensure selected row is in the filtered set even if it's an outlier, so user can see it
+         if str(sel_id) not in plot_df_filtered['AccountID'].values:
+             plot_df_filtered = pd.concat([plot_df_filtered, selected_row])
+
+    plot_df_filtered['Client_Type'] = plot_df_filtered['AccountID'].apply(lambda x: 'Selected Client' if str(x) == str(sel_id) else 'Other Clients')
     color_map = {'Selected Client': BRAND_COLOR_ORANGE, 'Other Clients': BRAND_COLOR_BLUE}
 else:
-    plot_df['Client_Type'] = 'All Clients'
+    plot_df_filtered['Client_Type'] = 'All Clients'
     color_map = {'All Clients': BRAND_COLOR_BLUE}
 
 # Create Scatter Plot
 fig = px.scatter(
-    plot_df,
+    plot_df_filtered,
     x="Utilization_Per_Subscriber",
     y="Cases_Per_Subscriber",
     color="Client_Type",
     color_discrete_map=color_map,
     hover_data=["AccountID", "Business_Industry", "Subscribers"],
-    title="Higher Utilization vs. Case Rate per Subscriber",
+    title="Higher Utilization vs. Case Rate per Subscriber (Outliers Removed)",
     labels={
         "Utilization_Per_Subscriber": "Total Utilization Actions per Subscriber",
         "Cases_Per_Subscriber": "Total Cases per Subscriber"
@@ -265,7 +273,6 @@ fig = px.scatter(
     height=500
 )
 
-# Update layout for better visuals
 fig.update_traces(marker=dict(size=12, opacity=0.8, line=dict(width=1, color='DarkSlateGrey')))
 fig.update_layout(legend_title_text="")
 
