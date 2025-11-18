@@ -20,9 +20,26 @@ def load_data():
         raw_df = pd.read_csv("app_raw_data.csv")
         benchmark_df = pd.read_csv("app_industry_benchmark.csv")
         
-        # Standardize column names by stripping whitespace (a common CSV issue)
+        # --- EXPLICIT COLUMN CLEANUP AND VERIFICATION ---
+        # 1. Standardize column names by stripping whitespace (a common CSV issue)
         raw_df.columns = raw_df.columns.str.strip()
         benchmark_df.columns = benchmark_df.columns.str.strip()
+        
+        # 2. Rename columns to GUARANTEED clean names if they contain the required string
+        # This fixes issues with invisible characters or complex spacing
+        
+        # Look for the correct Business Industry column in the raw data
+        if 'Business_Industry' in raw_df.columns:
+            raw_df.rename(columns={'Business_Industry': 'Clean_Industry'}, inplace=True)
+            benchmark_df.rename(columns={'Business_Industry': 'Clean_Industry'}, inplace=True)
+        elif 'Industry' in raw_df.columns: # Fallback check
+            raw_df.rename(columns={'Industry': 'Clean_Industry'}, inplace=True)
+            benchmark_df.rename(columns={'Industry': 'Clean_Industry'}, inplace=True)
+        
+        # 3. Final data checks
+        if 'Clean_Industry' not in raw_df.columns or 'Clean_Industry' not in benchmark_df.columns:
+             st.error("Data structure error: Cannot find the necessary 'Business Industry' column even after cleanup.")
+             return pd.DataFrame(), pd.DataFrame()
         
         # Ensure AccountID is string for stable selectbox keying
         raw_df['AccountID'] = raw_df['AccountID'].astype(str)
@@ -49,6 +66,7 @@ def get_client_data(account_id):
     client_data = client_row.to_dict()
     
     # Calculate client's utilization and case rates per subscriber
+    # NOTE: The columns now use 'Clean_Industry'
     RATE_COLS = [col for col in BENCHMARK_DF.columns if 'Per Subscriber' in col]
     
     # Use the 'Subscribers' column from the raw data
@@ -68,9 +86,9 @@ def get_client_data(account_id):
 def benchmark_client(client_data, industry_benchmark_df):
     # Compares client's utilization and case rates against industry average.
     
-    industry = client_data['Business_Industry']
+    industry = client_data['Clean_Industry'] # Use the clean name
     # Use a boolean mask to find the matching industry row safely
-    industry_row_match = industry_benchmark_df[industry_benchmark_df['Business_Industry'] == industry]
+    industry_row_match = industry_benchmark_df[industry_benchmark_df['Clean_Industry'] == industry]
     
     if industry_row_match.empty:
         return {'CaseLoad_Diff': 0, 'Util_Comparison': pd.DataFrame()}
@@ -232,7 +250,7 @@ if selected_account_id:
     with col_sub:
         st.text_input("1.2 Number of Subscribers", value=f"{client_data['Subscribers']:,}", disabled=True)
     with col_ind:
-        st.text_input("1.3 Business Industry", value=client_data['Business_Industry'], disabled=True)
+        st.text_input("1.3 Business Industry", value=client_data['Clean_Industry'], disabled=True) # Use Clean_Industry
     with col_since:
         # Calculate Customer Since duration
         if pd.notna(customer_since_date):
@@ -309,15 +327,15 @@ if not BENCHMARK_DF.empty:
     # 2.1 & 2.2 Input Fields
     col_proj_ind, col_proj_sub = st.columns(2)
     with col_proj_ind:
-        # Correctly accessing 'Business_Industry' from the benchmark DataFrame
-        industry_list = sorted(BENCHMARK_DF['Business_Industry'].unique().tolist())
+        # Use Clean_Industry for safe lookup
+        industry_list = sorted(BENCHMARK_DF['Clean_Industry'].unique().tolist())
         proj_industry = st.selectbox("2.1 Select Business Industry", industry_list)
     with col_proj_sub:
         proj_subscribers = st.number_input("2.2 Enter Number of Subscribers", min_value=1, value=1000, step=1)
     
     if proj_industry:
-        # Correctly accessing the projection row
-        proj_row = BENCHMARK_DF[BENCHMARK_DF['Business_Industry'] == proj_industry].iloc[0]
+        # Use Clean_Industry for safe filtering
+        proj_row = BENCHMARK_DF[BENCHMARK_DF['Clean_Industry'] == proj_industry].iloc[0]
         
         # Calculate projected cases
         projection_data = []
