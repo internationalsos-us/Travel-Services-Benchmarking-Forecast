@@ -1,4 +1,4 @@
-﻿AccountID,Business_Industry,WFR,Subscribers,Customer_Since,App_and_Portal_Sessions,Alerts_Sent_to_Travelers,Pre_Trip_Advisories_Sent,E_Learning_Completed_Courses,Travel_Cases,Medical_Cases_Information_and_Analysis,Medical_Cases_Out_Patient,Medical_Cases_In_Patient,Medical_Cases_Evacuation_Repatriation_RMR,Security_Cases_Information_and_Analysis,Security_Cases_Referrals,Security_Cases_Interventional_Assistance,Security_cases_Evacuation,Security_cases_Active_Monitoring
+﻿Account_ID,Business_Industry,WFR,Subscribers,Customer_Since,App_and_Portal_Sessions,Alerts_Sent_to_Travelers,Pre_Trip_Advisories_Sent,E_Learning_Completed_Courses,Travel_Cases,Medical_Cases_Information_and_Analysis,Medical_Cases_Out_Patient,Medical_Cases_In_Patient,Medical_Cases_Evacuation_Repatriation_RMR,Security_Cases_Information_and_Analysis,Security_Cases_Referrals,Security_Cases_Interventional_Assistance,Security_cases_Evacuation,Security_cases_Active_Monitoring
 1622230,Commercial and Professional Services,Non-WFR,4150,4/1/23,21,0,0,0,0,8,0,0,0,121,1,0,0,0
 1425542,Aviation Commercial,WFR1,100,4/3/24,14,0,0,0,1,1,3,0,2,0,0,0,0,0
 1073557,Government and IGOs,Non-WFR,2200,5/1/24,11,0,0,0,0,8,0,0,2,1,0,0,0,0
@@ -3023,4 +3023,5 @@
 1074535,Commercial and Professional Services,WFR2,793,2/16/12,1221,0,0,414,1,2,0,0,0,23,0,0,0,0
 1208777,Automobiles and Components,WFR2,825,9/1/15,165,0,0,4,2,3,1,0,0,0,0,0,0,0
 1265601,Education,WFR2,250,10/31/16,119,0,0,322,0,1,0,0,0,3,0,0,0,0
+
 1345315,Transport Services,WFR2,727,9/1/15,46,0,0,1,0,3,4,0,0,0,0,0,0,0
