@@ -12,7 +12,7 @@ BENCHMARK_COLOR_BAD = "#D4002C"
 # --- Column Mapping (Based on your specific instructions) ---
 # Keys are the CSV headers, Values are internal friendly names
 COLUMN_MAP = {
-    "Account_ID": "AccountID",
+    "AccountID": "AccountID",
     "Business_Industry": "Business_Industry",
     "WFR": "WFR",
     "Subscribers": "Subscribers",
