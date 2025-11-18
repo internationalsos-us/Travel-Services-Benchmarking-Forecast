@@ -4,14 +4,12 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go 
 from datetime import datetime, date
-
 # --- Global Configuration ---
 BRAND_COLOR_BLUE = "#2f4696"
 BRAND_COLOR_DARK = "#232762"
 BENCHMARK_COLOR_GOOD = "#009354"
 BENCHMARK_COLOR_BAD = "#D4002C"
 BRAND_COLOR_ORANGE = "#EF820F"
-
 # --- Column Mapping ---
 COLUMN_MAP = {
     "Account_ID": "AccountID",
@@ -34,24 +32,22 @@ COLUMN_MAP = {
     "Security_cases_Evacuation": "Security_Cases_Evac",
     "Security_cases_Active_Monitoring": "Security_Cases_ActiveMonitoring"
 }
-
 CASE_COLUMNS = [
     "Travel_Cases", "Medical_Cases_IA", "Medical_Cases_OutPatient",
     "Medical_Cases_InPatient", "Medical_Cases_Evac", "Security_Cases_IA",
     "Security_Cases_Referrals", "Security_Cases_Intervention",
     "Security_Cases_Evac", "Security_Cases_ActiveMonitoring"
 ]
-
 UTIL_COLUMNS = [
     "App_and_Portal_Sessions", "Alerts_Sent_to_Travelers",
     "Pre_Trip_Advisories_Sent", "E_Learning_Completed_Courses"
 ]
-
 # --- Data Loading ---
 @st.cache_data
 def load_data():
     try:
-        df = pd.read_csv("app_raw_data.csv")
+        # NOTE: Assumes 'app_raw_data.csv' is available in the environment
+        df = pd.read_csv("app_raw_data.csv") 
         df.columns = df.columns.str.strip()
         
         rename_dict = {}
@@ -61,6 +57,7 @@ def load_data():
             else:
                 # Fallback fuzzy match
                 for col in df.columns:
+                    # Simplified fuzzy match for robustness
                     if col.lower().replace(' ','').replace('_','') == req_col.lower().replace(' ','').replace('_',''):
                         rename_dict[col] = internal
                         break
@@ -74,7 +71,6 @@ def load_data():
              if col not in df.columns:
                  df[col] = 0
              df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-
         df['Total_Cases_Calculated'] = df[CASE_COLUMNS].sum(axis=1)
         
         # Pre-calculate rates
@@ -83,16 +79,12 @@ def load_data():
              cols_util_sum = [c for c in UTIL_COLUMNS if c in df.columns]
              df['Total_Utilization_Count'] = df[cols_util_sum].sum(axis=1)
              df['Utilization_Per_Subscriber'] = df.apply(lambda x: x['Total_Utilization_Count'] / x['Subscribers'] if x['Subscribers'] > 0 else 0, axis=1)
-
         return df
     except FileNotFoundError:
-        st.error("Data file 'app_raw_data.csv' not found.")
+        st.error("Data file 'app_raw_data.csv' not found. Please ensure it is uploaded.")
         return pd.DataFrame()
-
 RAW_DATA_DF = load_data()
-
 # --- Logic Functions ---
-
 @st.cache_data
 def calculate_industry_averages(df):
     if df.empty: return pd.DataFrame()
@@ -107,11 +99,15 @@ def calculate_industry_averages(df):
             data[f"{col}_Rate"] = group[col].sum() / total_sub
         
         data['Total_Cases_Rate'] = group['Total_Cases_Calculated'].sum() / total_sub
+        
+        # Add industry average of Utilization_Per_Subscriber for Section 4
+        util_rate_col = [c for c in group.columns if c == 'Utilization_Per_Subscriber']
+        if util_rate_col:
+            data['Utilization_Per_Subscriber'] = group['Total_Utilization_Count'].sum() / total_sub
+        
         benchmarks.append(data)
     return pd.DataFrame(benchmarks)
-
 INDUSTRY_BENCHMARKS_DF = calculate_industry_averages(RAW_DATA_DF)
-
 def get_client_metrics(account_id, raw_df, benchmark_df):
     if raw_df.empty: return None
     client_row = raw_df[raw_df['AccountID'] == account_id].iloc[0]
@@ -146,7 +142,6 @@ def get_client_metrics(account_id, raw_df, benchmark_df):
             })
         metrics['Util_Comparison'] = pd.DataFrame(util_comp)
     return metrics
-
 def run_projection(subs, industry, bench_df):
     if bench_df.empty: return pd.DataFrame(), 0
     row = bench_df[bench_df['Business_Industry'] == industry].iloc[0]
@@ -163,36 +158,57 @@ def run_projection(subs, industry, bench_df):
     df['% of Total'] = (df['Projected Cases']/total * 100) if total > 0 else 0
     return df, total
 
+@st.cache_data
+def get_impact_factor(df_industry):
+    """
+    Performs linear regression (Cases/Sub ~ Utilization/Sub) and returns the slope (m) and intercept (c).
+    The slope (m) is the Impact Factor.
+    """
+    if df_industry.empty or len(df_industry) < 2:
+        return 0.0, 0.0 # slope, intercept
+    
+    # Filter out outliers (same as in Section 2) for a more robust fit
+    util_cap = df_industry['Utilization_Per_Subscriber'].quantile(0.95)
+    df_filtered = df_industry[df_industry['Utilization_Per_Subscriber'] <= util_cap].copy()
+    
+    X = df_filtered['Utilization_Per_Subscriber']
+    Y = df_filtered['Cases_Per_Subscriber']
+    
+    if len(X) < 2:
+         return 0.0, 0.0
+         
+    # Perform linear regression: Y = mX + c
+    m, c = np.polyfit(X, Y, 1)
+    return m, c
+
 def get_diff_color(val, invert=False):
     # val is percentage (e.g. 10.0 for 10%)
     if invert: return BENCHMARK_COLOR_GOOD if val < -10 else (BENCHMARK_COLOR_BAD if val > 10 else BRAND_COLOR_BLUE)
     return BENCHMARK_COLOR_GOOD if val > 10 else (BENCHMARK_COLOR_BAD if val < -10 else BRAND_COLOR_BLUE)
-
 # --- APP LAYOUT ---
-
 st.set_page_config(page_title="International SOS | Benchmarking", layout="wide")
-
 st.markdown(f"""
 <div style="background-color:{BRAND_COLOR_DARK}; padding:20px; display:flex; align-items:center;">
     <img src="https://images.learn.internationalsos.com/EloquaImages/clients/InternationalSOS/%7B0769a7db-dae2-4ced-add6-d1a73cb775d5%7D_International_SOS_white_hr_%281%29.png" style="height:50px; margin-right:20px;">
     <h1 style="color:white; margin:0; font-size:24px;">Travel Services Benchmarking and Forecast</h1>
 </div>
 """, unsafe_allow_html=True)
-
 st.write("")
 st.markdown(f'<h1 style="color:{BRAND_COLOR_DARK};">Assistance Activity and ROI Benchmark</h1>', unsafe_allow_html=True)
 st.write("Compare client assistance activity against industry peers.")
 st.markdown('---')
-
 # Section 1
 st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">1. Account Benchmarking & Utilization Analysis</h2>', unsafe_allow_html=True)
-
 if RAW_DATA_DF.empty: st.stop()
-
 ids = sorted(RAW_DATA_DF['AccountID'].unique())
-sel_id = st.selectbox("1.1 Select Account ID", ["Select here..."] + ids)
-
+# Initialize sel_id, metrics globally for downstream use
+sel_id = "Select here..."
 metrics = None
+if 'sel_id_input' not in st.session_state:
+    st.session_state.sel_id_input = "Select here..."
+    
+sel_id = st.selectbox("1.1 Select Account ID", ["Select here..."] + ids, key='sel_id_input')
+
 if sel_id != "Select here...":
     metrics = get_client_metrics(sel_id, RAW_DATA_DF, INDUSTRY_BENCHMARKS_DF)
     if metrics:
@@ -255,7 +271,6 @@ if sel_id != "Select here...":
             
             chart_df = pd.DataFrame(chart_data)
             chart_df = chart_df[(chart_df['Client Rate (per 1k)'] > 0.01) | (chart_df['Industry Rate (per 1k)'] > 0.01)]
-
             if not chart_df.empty:
                 fig_compare = go.Figure()
                 fig_compare.add_trace(go.Bar(x=chart_df['Case Type'], y=chart_df['Client Rate (per 1k)'], name='Client Rate', marker_color=BRAND_COLOR_BLUE))
@@ -274,7 +289,6 @@ if sel_id != "Select here...":
                 st.plotly_chart(fig_compare, use_container_width=True)
             else:
                 st.info("No significant data.")
-
         st.write("")
         st.markdown(f'<h3 style="color:{BRAND_COLOR_DARK};">Utilization Analysis</h3>', unsafe_allow_html=True)
         if 'Util_Comparison' in metrics:
@@ -290,41 +304,44 @@ if sel_id != "Select here...":
             
             def style_util(row):
                 # Access original numeric value via index if possible, or re-parse
-                # Better: use the parallel series diff_values
                 val = diff_values[row.name]
                 color = get_diff_color(val, invert=False)
                 return [f'color: {color}; font-weight: bold' if col == 'Difference' else '' for col in row.index]
-
             st.dataframe(
                 udf.style.apply(style_util, axis=1),
                 use_container_width=True, 
                 hide_index=True
             )
-
 st.markdown('---')
-
 # --- SECTION 2: CORRELATION GRAPH ---
 st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">2. Correlation: Utilization vs. Case Load</h2>', unsafe_allow_html=True)
 st.write("Comparing **Total Utilization** against **Total Case Load**. Outliers (top 5%) are removed.")
-
 inds = sorted(RAW_DATA_DF['Business_Industry'].dropna().unique().tolist())
-sel_ind = st.selectbox("Filter Chart by Industry", ["All Industries"] + inds)
+# Initialize sel_ind globally
+sel_ind = "All Industries"
+if 'sel_ind_chart' not in st.session_state:
+    st.session_state.sel_ind_chart = "All Industries"
+    
+sel_ind = st.selectbox("Filter Chart by Industry", ["All Industries"] + inds, key='sel_ind_chart')
 
 plot_df = RAW_DATA_DF[RAW_DATA_DF['Subscribers'] > 0].copy()
 if sel_ind != "All Industries":
     plot_df = plot_df[plot_df['Business_Industry'] == sel_ind]
 
+# Calculate filtered data (excluding top 5% of utilization for visualization consistency)
 if not plot_df.empty:
     util_cap = plot_df['Utilization_Per_Subscriber'].quantile(0.95)
     plot_df_filtered = plot_df[plot_df['Utilization_Per_Subscriber'] <= util_cap].copy()
 else:
     plot_df_filtered = pd.DataFrame()
-
+    
+# Highlight selected client if applicable
 if sel_id != "Select here...":
     sel_row = RAW_DATA_DF[RAW_DATA_DF['AccountID'] == str(sel_id)]
+    # Only concatenate if the client is not already in the filtered set (i.e., they are an outlier)
     if not sel_row.empty and str(sel_id) not in plot_df_filtered['AccountID'].values:
              plot_df_filtered = pd.concat([plot_df_filtered, sel_row])
-
+             
     plot_df_filtered['Client_Type'] = plot_df_filtered['AccountID'].apply(lambda x: 'Selected Client' if str(x) == str(sel_id) else 'Other Clients')
     cmap = {'Selected Client': BRAND_COLOR_ORANGE, 'Other Clients': BRAND_COLOR_BLUE}
 else:
@@ -332,36 +349,68 @@ else:
     cmap = {'All Clients': BRAND_COLOR_BLUE}
 
 if not plot_df_filtered.empty:
-    fig = px.scatter(
-        plot_df_filtered, x="Utilization_Per_Subscriber", y="Cases_Per_Subscriber",
-        color="Client_Type", color_discrete_map=cmap,
-        hover_data=["AccountID", "Business_Industry", "Subscribers"],
-        labels={"Utilization_Per_Subscriber": "Total Utilization/Subscriber", "Cases_Per_Subscriber": "Total Cases/Subscriber"},
-        height=500
-    )
+    # Calculate trendline data and draw it if a specific industry is selected
+    if len(plot_df) >= 2 and sel_ind != "All Industries":
+        # Calculate slope and intercept for the selected industry (using the original, non-highlighted data)
+        trend_m, trend_c = get_impact_factor(plot_df)
+        
+        # Create a trend line
+        x_min = plot_df['Utilization_Per_Subscriber'].min()
+        x_max = plot_df['Utilization_Per_Subscriber'].max()
+        x_range = np.linspace(x_min, x_max, 100)
+        y_trend = trend_m * x_range + trend_c
+        
+        # Ensure trendline points are positive for plotting context
+        y_trend = np.maximum(y_trend, 0)
+
+        # Create the initial scatter plot
+        fig = px.scatter(
+            plot_df_filtered, x="Utilization_Per_Subscriber", y="Cases_Per_Subscriber",
+            color="Client_Type", color_discrete_map=cmap,
+            hover_data=["AccountID", "Business_Industry", "Subscribers"],
+            labels={"Utilization_Per_Subscriber": "Total Utilization/Subscriber", "Cases_Per_Subscriber": "Total Cases/Subscriber"},
+            height=500
+        )
+        
+        # Add trendline to the scatter plot
+        fig.add_trace(go.Scatter(x=x_range, y=y_trend, mode='lines', 
+                                 name=f'Trend Line (m={trend_m:+.4f})', 
+                                 line=dict(color=BRAND_COLOR_DARK, width=2, dash='dot')))
+                              
+    else:
+         fig = px.scatter(
+            plot_df_filtered, x="Utilization_Per_Subscriber", y="Cases_Per_Subscriber",
+            color="Client_Type", color_discrete_map=cmap,
+            hover_data=["AccountID", "Business_Industry", "Subscribers"],
+            labels={"Utilization_Per_Subscriber": "Total Utilization/Subscriber", "Cases_Per_Subscriber": "Total Cases/Subscriber"},
+            height=500
+        )
+        
     fig.update_traces(marker=dict(size=12, opacity=0.8, line=dict(width=1, color='DarkSlateGrey')))
     fig.update_layout(legend_title_text="")
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("No data available.")
-
 st.markdown('---')
-
 # --- SECTION 3: Projection ---
 st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">3. Case Projection Model</h2>', unsafe_allow_html=True)
-
 c1, c2 = st.columns(2)
 with c1:
+    # Default to the industry selected in the chart if one is selected
+    default_ind = sel_ind if sel_ind != "All Industries" and sel_ind is not None else (metrics['Industry'] if metrics else None)
+    
     if not INDUSTRY_BENCHMARKS_DF.empty:
-        inds = sorted(INDUSTRY_BENCHMARKS_DF['Business_Industry'].unique())
-        d_ix = inds.index(metrics['Industry']) if metrics and metrics['Industry'] in inds else 0
-        p_ind = st.selectbox("3.1 Select Industry", inds, index=d_ix)
+        inds_list = sorted(INDUSTRY_BENCHMARKS_DF['Business_Industry'].unique())
+        try:
+            d_ix = inds_list.index(default_ind) if default_ind in inds_list else 0
+        except ValueError:
+            d_ix = 0
+        p_ind = st.selectbox("3.1 Select Industry", inds_list, index=d_ix)
     else:
         p_ind = None
 with c2:
     d_sub = int(metrics['Subscribers']) if metrics else 0
     p_sub = st.number_input("3.2 Subscribers", min_value=0, value=d_sub)
-
 if p_ind and p_sub > 0 and not INDUSTRY_BENCHMARKS_DF.empty:
     pdf, tot_p = run_projection(p_sub, p_ind, INDUSTRY_BENCHMARKS_DF)
     m_col, t_col = st.columns([1, 2])
@@ -377,8 +426,124 @@ if p_ind and p_sub > 0 and not INDUSTRY_BENCHMARKS_DF.empty:
             use_container_width=True,
             hide_index=True
         )
+st.markdown('---')
+
+# --- SECTION 4: What-If Scenario Planner (NEW SECTION) ---
+st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">4. What-If Scenario Planner</h2>', unsafe_allow_html=True)
+st.write("Simulate the potential impact on case load by increasing utilization, based on the real correlation derived from the selected industry's data.")
+
+# Use the industry selected in Section 2 for context
+if sel_ind == "All Industries" or sel_ind is None:
+    st.info("Please select a specific industry in Section 2 to enable the scenario planner.")
+else:
+    # 1. Prepare data (same logic as Section 2's initial filtering)
+    scenario_df = RAW_DATA_DF[RAW_DATA_DF['Subscribers'] > 0].copy()
+    scenario_df = scenario_df[scenario_df['Business_Industry'] == sel_ind]
+
+    # 2. Calculate the Impact Factor (Slope)
+    impact_slope, _ = get_impact_factor(scenario_df)
+
+    if len(scenario_df) < 2:
+        st.warning(f"Not enough data points ({len(scenario_df)}) to calculate a reliable Impact Factor for the {sel_ind} industry.")
+    else:
+        # 3. Display Impact Factor (Slope)
+        st.markdown(f"""
+            <p style="font-size:16px; margin-bottom:5px;">
+                Analysis for the <strong>{sel_ind}</strong> industry:
+            </p>
+        """, unsafe_allow_html=True)
+        
+        col_m, col_util_avg = st.columns(2)
+        
+        # Determine color for the slope: negative slope (increase util -> decrease cases) is GOOD
+        impact_metric = f"{impact_slope:+.4f}"
+        impact_color = BENCHMARK_COLOR_GOOD if impact_slope < 0 else (BENCHMARK_COLOR_BAD if impact_slope > 0.0001 else BRAND_COLOR_BLUE)
+
+        with col_m:
+            st.markdown(f"""
+                <div style="background-color:#f0f2f6; padding:15px; border-radius:10px;">
+                    <h3 style="margin:0; color:{BRAND_COLOR_DARK}; font-size:16px;">Calculated Case Impact Factor ($m$)</h3>
+                    <h2 style="font-size:32px; margin:5px 0 0; color:{impact_color}">{impact_metric}</h2>
+                    <p style="font-size:12px; margin:0; color:gray;">
+                        Change in Cases/Subscriber per 1 unit increase in Utilization/Subscriber.
+                    </p>
+                </div>
+            """, unsafe_allow_html=True)
+            
+        # Get current industry average utilization rate and case rate
+        ind_row = INDUSTRY_BENCHMARKS_DF[INDUSTRY_BENCHMARKS_DF['Business_Industry'] == sel_ind]
+        avg_util_rate = ind_row['Utilization_Per_Subscriber'].iloc[0] if not ind_row.empty else 0
+        avg_case_rate = ind_row['Total_Cases_Rate'].iloc[0] if not ind_row.empty else 0
+
+        with col_util_avg:
+            st.markdown(f"""
+                <div style="background-color:#f0f2f6; padding:15px; border-radius:10px;">
+                    <h3 style="margin:0; color:{BRAND_COLOR_DARK}; font-size:16px;">Current Industry Average Utilization</h3>
+                    <h2 style="font-size:32px; margin:5px 0 0; color:{BRAND_COLOR_BLUE}">{avg_util_rate:.4f}</h2>
+                    <p style="font-size:12px; margin:0; color:gray;">
+                        Average Total Utilization Actions per Subscriber for {sel_ind}.
+                    </p>
+                </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown('---')
+        
+        # 4. Single Slider Input
+        increase_percent = st.slider(
+            "4.2 Increase Total Utilization (%)",
+            min_value=0, max_value=50, value=10, step=5,
+            help="Simulate a percentage increase in the industry's average utilization rate."
+        )
+
+        if increase_percent > 0 and avg_util_rate > 0 and avg_case_rate > 0:
+            
+            # 5. Calculation
+            # a) Calculate the absolute increase in utilization rate
+            util_increase_abs = avg_util_rate * (increase_percent / 100)
+            
+            # b) Calculate the expected change in cases/subscriber
+            # Change in Y = Slope * Change in X
+            case_rate_change = util_increase_abs * impact_slope
+            
+            # c) Convert the case rate change to a percentage change relative to the industry average case rate
+            case_percent_change = (case_rate_change / avg_case_rate) * 100
+            
+            # Determine color for result
+            result_color = BENCHMARK_COLOR_GOOD if case_percent_change < 0 else (BENCHMARK_COLOR_BAD if case_percent_change > 0.01 else BRAND_COLOR_BLUE)
+            
+            
+            st.markdown(f"""
+                <div style="background-color:#e6f7ff; padding:20px; border-radius:10px; border-left: 5px solid {result_color}; margin-top: 20px;">
+                    <h3 style="margin:0 0 10px; color:{BRAND_COLOR_DARK};">Projected Scenario Outcome for {sel_ind}</h3>
+                    <div style="display:flex; justify-content:space-around; gap: 20px;">
+                        <div style="flex:1; text-align: center;">
+                            <p style="font-size:14px; color:gray; margin-bottom:5px;">Simulated Utilization Rate Increase</p>
+                            <p style="font-size:20px; font-weight:bold; color:{BRAND_COLOR_BLUE}; margin:0;">
+                                {util_increase_abs:+.4f}
+                            </p>
+                            <p style="font-size:12px; margin:0; color:gray;">
+                                Target Utilization Rate: {(avg_util_rate + util_increase_abs):.4f}
+                            </p>
+                        </div>
+                        <div style="flex:1; text-align: center;">
+                            <p style="font-size:14px; color:gray; margin-bottom:5px;">Expected Case Load Change</p>
+                            <p style="font-size:32px; font-weight:extra-bold; color:{result_color}; margin:0;">
+                                {case_percent_change:+.1f}%
+                            </p>
+                            <p style="font-size:12px; margin:0; color:gray;">
+                                Change relative to average case load of {avg_case_rate:.4f} cases/subscriber.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+        elif increase_percent > 0:
+            st.warning("Cannot run scenario: Current Industry Average Utilization Rate or Case Rate is 0.")
+        else:
+            st.info("Adjust the slider to see the potential impact on case load.")
 
 st.markdown('---')
+
 st.markdown(f"""
 <div style="text-align:center; color:gray; padding:20px;">
     <a href="https://www.internationalsos.com/get-in-touch?utm_source=benchmarkingreport" target="_blank">
