@@ -63,14 +63,13 @@ def get_client_data(account_id):
     # Filter the raw data for the selected AccountID
     client_row = RAW_DATA_DF[RAW_DATA_DF['AccountID'] == account_id].iloc[0]
     
+    # Convert row to dictionary for easier key access
     client_data = client_row.to_dict()
     
     # Get the list of all base columns that need a 'Per Subscriber' rate calculation
-    # We use the benchmark DF columns to know which rates exist.
     RATE_BASE_COLUMNS = [col.replace(' Per Subscriber', '').strip() 
                          for col in BENCHMARK_DF.columns if 'Per Subscriber' in col]
     
-    # Use the 'Subscribers' column from the raw data
     subscribers = client_data.get('Subscribers', 0)
     
     # Calculate client's utilization and case rates per subscriber (FIX APPLIED HERE)
@@ -78,8 +77,12 @@ def get_client_data(account_id):
         rate_col_name = f"{original_col_name} Per Subscriber"
         
         # Check if the raw data column exists and subscribers > 0
-        if subscribers > 0 and original_col_name in client_data:
-            client_data[rate_col_name] = client_data[original_col_name] / subscribers
+        # We must use client_data.get(key, 0) because the dictionary keys might have inherited subtle formatting
+        # issues or be missing from the dict, even if they exist in the DataFrame.
+        raw_value = client_data.get(original_col_name, 0)
+        
+        if subscribers > 0 and raw_value != 0:
+            client_data[rate_col_name] = raw_value / subscribers
         else:
             client_data[rate_col_name] = 0 # Default to 0 if data is missing or no subscribers
 
@@ -100,6 +103,7 @@ def benchmark_client(client_data, industry_benchmark_df):
     results = {}
     
     # 1. Case Load Benchmarking (This reference is now safe as it's generated in get_client_data)
+    # The client_data dictionary is guaranteed to contain this key now.
     total_cases_rate_client = client_data['Total Cases Per Subscriber']
     total_cases_rate_industry = industry_row['Total Cases Per Subscriber']
     
