@@ -24,11 +24,10 @@ def load_data():
         benchmark_df.columns = benchmark_df.columns.str.strip()
         
         # 2. Force rename critical columns to simple, guaranteed names
-        # Based on the final CSV structure:
         raw_df.rename(columns={
             'Business_Industry': 'Clean_Industry', 
             'Customer_Since': 'Customer_Since_Clean',
-            'Total Cases': 'Total_Cases_Client_Raw' # The original total case count column
+            'Total Cases': 'Total_Cases_Client_Raw'
         }, inplace=True, errors='ignore')
         
         benchmark_df.rename(columns={
@@ -57,16 +56,15 @@ def get_client_data(account_id):
     if RAW_DATA_DF.empty:
         return None
     
+    # Filter the raw data for the selected AccountID
     client_row = RAW_DATA_DF[RAW_DATA_DF['AccountID'] == account_id].iloc[0]
-    client_data = client_row.to_dict()
     
-    # Clean keys in the dictionary just in case
+    # Convert the row to a dictionary, ensuring all keys are clean strings
     client_data = {key.strip(): value for key, value in client_row.items()}
     
     subscribers = client_data.get('Subscribers', 0)
     
-    # 1. Define all columns that need a 'Per Subscriber' rate (using the final RAW data column names)
-    # Note: These names match the raw data file after the forced renames in load_data
+    # Define all base columns that need a 'Per Subscriber' rate calculation
     RAW_RATE_BASE_COLS = [
         'Total_Cases_Client_Raw', 'Medical Cases', 'Security Cases', 'Travel Cases', 
         'Medical Cases: I&A', 'Medical Cases: Out-Patient', 'Medical Cases: In-Patient', 
@@ -77,7 +75,7 @@ def get_client_data(account_id):
         'DLP Completed Courses'
     ]
     
-    # 2. Calculate client's utilization and case rates per subscriber
+    # Calculate client's utilization and case rates per subscriber
     for original_col_name in RAW_RATE_BASE_COLS:
         rate_col_name = f"{original_col_name} Per Subscriber"
         
@@ -103,7 +101,7 @@ def benchmark_client(client_data, industry_benchmark_df):
     
     results = {}
     
-    # 1. Case Load Benchmarking (Access is now safe)
+    # 1. Case Load Benchmarking (Total Cases)
     total_cases_rate_client = client_data['Total_Cases_Client_Raw Per Subscriber']
     
     # Industry's rate (Total Cases column is based on per 100 subscribers, must be divided by 100)
@@ -130,8 +128,7 @@ def benchmark_client(client_data, industry_benchmark_df):
         rate_col = f"{metric_base_name} Per Subscriber"
         
         client_rate = client_data.get(rate_col, 0)
-        # Note: Industry benchmark data is assumed to be raw counts/rates per 100, needing conversion if necessary
-        industry_rate = industry_row[industry_col_name] # Benchmark data uses raw counts
+        industry_rate = industry_row[industry_col_name]
         
         if industry_rate > 0:
             diff_percent = ((client_rate - industry_rate) / industry_rate) * 100
