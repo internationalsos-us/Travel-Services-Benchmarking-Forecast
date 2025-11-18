@@ -68,7 +68,7 @@ def load_data():
         df['AccountID'] = df['AccountID'].astype(str)
         df['Customer_Since'] = pd.to_datetime(df['Customer_Since'], errors='coerce')
         
-        # Ensure columns exist and fill NaN with 0
+        # Ensure columns exist
         for col in CASE_COLUMNS + UTIL_COLUMNS:
             if col not in df.columns:
                 df[col] = 0
@@ -76,7 +76,6 @@ def load_data():
 
         df['Total_Cases_Calculated'] = df[CASE_COLUMNS].sum(axis=1)
         
-        # Pre-calculate rates
         if 'Subscribers' in df.columns:
              df['Cases_Per_Subscriber'] = df.apply(lambda x: x['Total_Cases_Calculated'] / x['Subscribers'] if x['Subscribers'] > 0 else 0, axis=1)
              cols_util_sum = [c for c in UTIL_COLUMNS if c in df.columns]
@@ -138,10 +137,10 @@ def get_client_metrics(account_id, raw_df, benchmark_df):
         for col in UTIL_COLUMNS:
             u_rate = client_row[col] / subs
             ui_rate = ind_row[f"{col}_Rate"]
-            diff = ((u_rate - ui_rate)/ui_rate)*100 if ui_rate > 0 else 0
+            diff = ((u_rate - ui_rate)/ui_rate) if ui_rate > 0 else 0 # Keep as decimal for formatting
             util_comp.append({
                 'Metric': col.replace('_',' '), 'Client Rate': u_rate, 
-                'Industry Avg': ui_rate, 'Difference': diff/100 # Store as decimal for formatting
+                'Industry Avg': ui_rate, 'Difference': diff 
             })
         metrics['Util_Comparison'] = pd.DataFrame(util_comp)
     return metrics
@@ -159,11 +158,11 @@ def run_projection(subs, industry, bench_df):
             'Projected Cases': val
         })
     df = pd.DataFrame(projs)
-    df['% of Total'] = (df['Projected Cases']/total) if total > 0 else 0
+    df['% of Total'] = (df['Projected Cases']/total) if total > 0 else 0 # Keep as decimal
     return df, total
 
 def get_diff_color(val, invert=False):
-    # Input val is decimal (0.1 = 10%), thresholds adjusted to 0.1
+    # Val is decimal here (e.g. 0.1 = 10%)
     if invert: return BENCHMARK_COLOR_GOOD if val < -0.1 else (BENCHMARK_COLOR_BAD if val > 0.1 else BRAND_COLOR_BLUE)
     return BENCHMARK_COLOR_GOOD if val > 0.1 else (BENCHMARK_COLOR_BAD if val < -0.1 else BRAND_COLOR_BLUE)
 
@@ -203,8 +202,7 @@ if sel_id != "Select here...":
         st.markdown('---')
         
         diff = metrics.get('Case_Load_Diff', 0)
-        # diff is percentage (e.g. 50.0 for 50%)
-        # Color logic expects decimal? No, get_diff_color updated to expect decimal, let's fix diff passed
+        # diff is percentage (e.g. 50.0). Color logic expects decimal.
         color = get_diff_color(diff/100, invert=True)
         
         cc1, cc2 = st.columns([1, 2])
@@ -229,19 +227,16 @@ if sel_id != "Select here...":
             
             if not bd_df.empty:
                 tot = bd_df['Cases'].sum()
-                bd_df['% of Total'] = (bd_df['Cases'] / tot)
+                bd_df['% of Total'] = (bd_df['Cases'] / tot) # Decimal 0-1
                 
                 st.subheader("Client Case Breakdown")
                 st.dataframe(
                     bd_df,
                     column_config={
-                        "% of Total": st.column_config.ProgressColumn(
+                        "% of Total": st.column_config.NumberColumn(
                             "% of Total",
-                            format="%.1f%%", # Correct format string
-                            min_value=0,
-                            max_value=1
-                        ),
-                        "Cases": st.column_config.NumberColumn("Cases", format="%d")
+                            format="%.1f%%" # Correct format for decimal -> percentage
+                        )
                     },
                     use_container_width=True,
                     hide_index=True
@@ -249,7 +244,7 @@ if sel_id != "Select here...":
             else:
                 st.info("No cases recorded.")
         
-        # --- CHART: Case Rate Comparison ---
+        # --- CHART: Case Rate Comparison with Industry Line ---
         st.write("")
         st.subheader("Client vs. Industry: Case Rate Comparison")
         
@@ -267,21 +262,29 @@ if sel_id != "Select here...":
 
             if not chart_df.empty:
                 fig_compare = go.Figure()
-                fig_compare.add_trace(go.Bar(x=chart_df['Case Type'], y=chart_df['Client Rate (per 1k)'], name='Client Rate', marker_color=BRAND_COLOR_BLUE))
                 
-                # Add Red Dashed Line for Industry Average - Represented as scatter markers joined by lines or just markers?
-                # Standard practice for 'benchmark line' on bar chart is often a line across the bar or a separate scatter point.
-                # Here we use a Scatter trace that looks like a line indicator.
+                # Client Bars
+                fig_compare.add_trace(go.Bar(
+                    x=chart_df['Case Type'], 
+                    y=chart_df['Client Rate (per 1k)'], 
+                    name='Client Rate', 
+                    marker_color=BRAND_COLOR_BLUE
+                ))
+                
+                # Industry Average Line (Red Dashed)
+                # Using Scatter with mode='lines' to draw a line across categories? 
+                # Actually, distinct markers or steps is better for categorical x-axis.
+                # Let's use a Scatter trace connecting points to form a 'trend' line visual
                 fig_compare.add_trace(go.Scatter(
                     x=chart_df['Case Type'], 
                     y=chart_df['Industry Rate (per 1k)'],
                     name='Industry Avg',
-                    mode='markers',
-                    marker=dict(color='red', symbol='line-ew', size=15, line=dict(width=3, color='red'))
+                    mode='lines+markers',
+                    line=dict(color='red', width=2, dash='dash'),
+                    marker=dict(color='red', size=8)
                 ))
-                # Also adding a transparent line trace to connect them if desired, but 'line-ew' marker is good for "benchmark level"
                 
-                fig_compare.update_layout(yaxis_title="Rate per 1k Subscribers", xaxis_title="", legend_title="", barmode='group', height=400)
+                fig_compare.update_layout(yaxis_title="Rate per 1k Subscribers", xaxis_title="", legend_title="", barmode='group', height=450)
                 st.plotly_chart(fig_compare, use_container_width=True)
             else:
                 st.info("No significant data.")
@@ -372,10 +375,9 @@ if p_ind and p_sub > 0 and not INDUSTRY_BENCHMARKS_DF.empty:
         st.dataframe(
             pdf,
             column_config={
-                "% of Total": st.column_config.ProgressColumn(
+                "% of Total": st.column_config.NumberColumn(
                     "% of Total",
-                    format="%.1f%%",
-                    min_value=0, max_value=1
+                    format="%.1f%%"
                 ),
                 "Projected Cases": st.column_config.NumberColumn("Projected Cases", format="%.1f")
             },
