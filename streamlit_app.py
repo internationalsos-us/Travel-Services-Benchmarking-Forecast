@@ -8,6 +8,7 @@ BRAND_COLOR_BLUE = "#2f4696"
 BRAND_COLOR_DARK = "#232762"
 BENCHMARK_COLOR_GOOD = "#009354"
 BENCHMARK_COLOR_BAD = "#D4002C"
+BRAND_COLOR_ORANGE = "#EF820F"  # Missing definition added here
 
 # --- Column Mapping (Based on your specific instructions A-S) ---
 # Keys are the CSV headers, Values are internal friendly names
@@ -175,10 +176,11 @@ def get_client_metrics(account_id, raw_df, benchmark_df):
     client_subs = client_row['Subscribers']
     
     # 2. Get Industry Benchmark Row
+    # Handle case where industry might not be in benchmark (e.g. singular data point)
     if client_industry in benchmark_df['Business_Industry'].values:
         industry_row = benchmark_df[benchmark_df['Business_Industry'] == client_industry].iloc[0]
     else:
-        return None 
+        return None # Should not happen if benchmark is built from raw data
     
     metrics = {
         'Client_Name': str(client_row['AccountID']),
@@ -257,10 +259,10 @@ def run_projection(subscribers, industry, benchmark_df):
 
 # --- Helper for Styling ---
 def get_diff_color(val, invert=False):
-    if invert: 
+    if invert: # For Cases (Lower is usually better/good, Higher is bad)
         if val < -10: return BENCHMARK_COLOR_GOOD
         if val > 10: return BENCHMARK_COLOR_BAD
-    else: 
+    else: # For Utilization (Higher is usually better/good)
         if val > 10: return BENCHMARK_COLOR_GOOD
         if val < -10: return BENCHMARK_COLOR_BAD
     return BRAND_COLOR_BLUE
@@ -410,7 +412,8 @@ if proj_ind and proj_sub > 0 and not INDUSTRY_BENCHMARKS_DF.empty:
 
 # --- Footer ---
 st.markdown('---')
-# Removed Value Proposition and Copyright footer
+# Double curly braces {{ }} used for CSS inside f-string
+# Added the BRAND_COLOR_ORANGE variable which was missing
 st.markdown(f"""
 <div style="text-align:center; color:gray; padding:20px;">
     <a href="https://www.internationalsos.com/get-in-touch?utm_source=benchmarkingreport" target="_blank">
