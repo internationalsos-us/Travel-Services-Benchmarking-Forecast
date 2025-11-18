@@ -175,11 +175,10 @@ def get_client_metrics(account_id, raw_df, benchmark_df):
     client_subs = client_row['Subscribers']
     
     # 2. Get Industry Benchmark Row
-    # Handle case where industry might not be in benchmark (e.g. singular data point)
     if client_industry in benchmark_df['Business_Industry'].values:
         industry_row = benchmark_df[benchmark_df['Business_Industry'] == client_industry].iloc[0]
     else:
-        return None # Should not happen if benchmark is built from raw data
+        return None 
     
     metrics = {
         'Client_Name': str(client_row['AccountID']),
@@ -258,10 +257,10 @@ def run_projection(subscribers, industry, benchmark_df):
 
 # --- Helper for Styling ---
 def get_diff_color(val, invert=False):
-    if invert: # For Cases (Lower is usually better/good, Higher is bad)
+    if invert: 
         if val < -10: return BENCHMARK_COLOR_GOOD
         if val > 10: return BENCHMARK_COLOR_BAD
-    else: # For Utilization (Higher is usually better/good)
+    else: 
         if val > 10: return BENCHMARK_COLOR_GOOD
         if val < -10: return BENCHMARK_COLOR_BAD
     return BRAND_COLOR_BLUE
@@ -411,17 +410,13 @@ if proj_ind and proj_sub > 0 and not INDUSTRY_BENCHMARKS_DF.empty:
 
 # --- Footer ---
 st.markdown('---')
-# Double curly braces {{ }} used for CSS inside f-string
+# Removed Value Proposition and Copyright footer
 st.markdown(f"""
 <div style="text-align:center; color:gray; padding:20px;">
-    <h3 style="color:{BRAND_COLOR_BLUE}">Value Proposition</h3>
-    <p>Highlights services contributing to ROI: 24/7 Support, Risk Mitigation, Duty of Care.</p>
-    <br>
     <a href="https://www.internationalsos.com/get-in-touch?utm_source=benchmarkingreport" target="_blank">
-        <button style="background-color:#EF820F; color:white; border:none; padding:10px 20px; border-radius:5px; cursor:pointer;">
+        <button style="background-color:{BRAND_COLOR_ORANGE}; color:white; border:none; padding:10px 20px; border-radius:5px; cursor:pointer;">
             Get in Touch
         </button>
     </a>
-    <p style="margin-top:20px;">© 2025 International SOS. WORLDWIDE REACH. HUMAN TOUCH.</p>
 </div>
 """, unsafe_allow_html=True)
