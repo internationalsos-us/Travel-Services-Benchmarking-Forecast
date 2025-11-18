@@ -4,6 +4,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go 
 from datetime import datetime, date
+from scipy import stats # Import for linear regression
 
 # --- Global Configuration ---
 BRAND_COLOR_BLUE = "#2f4696"
@@ -59,7 +60,6 @@ def load_data():
             if req_col in df.columns:
                 rename_dict[req_col] = internal
             else:
-                # Fallback fuzzy match
                 for col in df.columns:
                     if col.lower().replace(' ','').replace('_','') == req_col.lower().replace(' ','').replace('_',''):
                         rename_dict[col] = internal
@@ -69,7 +69,6 @@ def load_data():
         df['AccountID'] = df['AccountID'].astype(str)
         df['Customer_Since'] = pd.to_datetime(df['Customer_Since'], errors='coerce')
         
-        # Ensure columns exist and fill NaN with 0
         for col in CASE_COLUMNS + UTIL_COLUMNS + ['Subscribers']:
              if col not in df.columns:
                  df[col] = 0
@@ -77,7 +76,6 @@ def load_data():
 
         df['Total_Cases_Calculated'] = df[CASE_COLUMNS].sum(axis=1)
         
-        # Pre-calculate rates
         if 'Subscribers' in df.columns:
              df['Cases_Per_Subscriber'] = df.apply(lambda x: x['Total_Cases_Calculated'] / x['Subscribers'] if x['Subscribers'] > 0 else 0, axis=1)
              cols_util_sum = [c for c in UTIL_COLUMNS if c in df.columns]
@@ -163,8 +161,46 @@ def run_projection(subs, industry, bench_df):
     df['% of Total'] = (df['Projected Cases']/total * 100) if total > 0 else 0
     return df, total
 
+def calculate_data_driven_slope(df, industry):
+    """Calculates the linear regression slope (impact factor) for the specific industry."""
+    industry_df = df[df['Business_Industry'] == industry]
+    
+    # Need at least 2 points for regression
+    if len(industry_df) < 2:
+        return 0, "Insufficient data for regression"
+        
+    x = industry_df['Utilization_Per_Subscriber']
+    y = industry_df['Cases_Per_Subscriber']
+    
+    # Basic linear regression
+    slope, intercept, r_value, p_value, std_err = stats.linregress(x, y)
+    
+    return slope, r_value
+
+def run_what_if_scenario_data_driven(current_util_rate, current_case_rate, subs, increase_pct, slope):
+    """
+    Calculates scenario based on actual data slope.
+    Delta Cases = Delta Utilization * Slope * Subscribers
+    """
+    
+    # Calculate new utilization rate based on % increase selected
+    new_util_rate = current_util_rate * (1 + increase_pct/100)
+    delta_util = new_util_rate - current_util_rate
+    
+    # Calculate change in case rate using the slope
+    # If slope is negative (good), case rate decreases.
+    delta_case_rate = delta_util * slope
+    
+    new_case_rate = max(0, current_case_rate + delta_case_rate)
+    
+    current_total_cases = current_case_rate * subs
+    new_total_cases = new_case_rate * subs
+    
+    cases_prevented = current_total_cases - new_total_cases
+    
+    return new_total_cases, cases_prevented
+
 def get_diff_color(val, invert=False):
-    # val is percentage (e.g. 10.0 for 10%)
     if invert: return BENCHMARK_COLOR_GOOD if val < -10 else (BENCHMARK_COLOR_BAD if val > 10 else BRAND_COLOR_BLUE)
     return BENCHMARK_COLOR_GOOD if val > 10 else (BENCHMARK_COLOR_BAD if val < -10 else BRAND_COLOR_BLUE)
 
@@ -193,9 +229,14 @@ ids = sorted(RAW_DATA_DF['AccountID'].unique())
 sel_id = st.selectbox("1.1 Select Account ID", ["Select here..."] + ids)
 
 metrics = None
+client_row_data = None # Store full row for section 4
+
 if sel_id != "Select here...":
     metrics = get_client_metrics(sel_id, RAW_DATA_DF, INDUSTRY_BENCHMARKS_DF)
     if metrics:
+        # Retrieve raw row for later use in calculations
+        client_row_data = RAW_DATA_DF[RAW_DATA_DF['AccountID'] == str(sel_id)].iloc[0]
+        
         c1, c2, c3 = st.columns(3)
         c1.text_input("1.2 Business Industry", value=metrics['Industry'], disabled=True)
         c2.text_input("1.3 Number of Subscribers", value=f"{metrics['Subscribers']:,}", disabled=True)
@@ -228,7 +269,7 @@ if sel_id != "Select here...":
             
             if not bd_df.empty:
                 tot = bd_df['Cases'].sum()
-                # Format as string directly to avoid syntax errors in column_config
+                # String format to avoid syntax error
                 bd_df['% of Total'] = (bd_df['Cases'] / tot * 100).map('{:.1f}%'.format)
                 
                 st.subheader("Client Case Breakdown")
@@ -259,8 +300,6 @@ if sel_id != "Select here...":
             if not chart_df.empty:
                 fig_compare = go.Figure()
                 fig_compare.add_trace(go.Bar(x=chart_df['Case Type'], y=chart_df['Client Rate (per 1k)'], name='Client Rate', marker_color=BRAND_COLOR_BLUE))
-                
-                # Industry Average Line (Red Dashed)
                 fig_compare.add_trace(go.Scatter(
                     x=chart_df['Case Type'], 
                     y=chart_df['Industry Rate (per 1k)'],
@@ -269,7 +308,6 @@ if sel_id != "Select here...":
                     line=dict(color='red', width=2, dash='dash'), 
                     marker=dict(symbol='circle', size=8, color='red')
                 ))
-                
                 fig_compare.update_layout(yaxis_title="Rate per 1k Subscribers", xaxis_title="", legend_title="", barmode='group', height=450)
                 st.plotly_chart(fig_compare, use_container_width=True)
             else:
@@ -279,27 +317,17 @@ if sel_id != "Select here...":
         st.markdown(f'<h3 style="color:{BRAND_COLOR_DARK};">Utilization Analysis</h3>', unsafe_allow_html=True)
         if 'Util_Comparison' in metrics:
             udf = metrics['Util_Comparison']
-            
-            # Pre-format columns to strings to avoid Streamlit formatting errors
             udf['Client Rate'] = udf['Client Rate'].map('{:.4f}'.format)
             udf['Industry Avg'] = udf['Industry Avg'].map('{:.4f}'.format)
-            
-            # Store raw difference for color logic before formatting
             diff_values = udf['Difference'].copy()
             udf['Difference'] = udf['Difference'].map('{:+.1f}%'.format)
             
             def style_util(row):
-                # Access original numeric value via index if possible, or re-parse
-                # Better: use the parallel series diff_values
                 val = diff_values[row.name]
                 color = get_diff_color(val, invert=False)
                 return [f'color: {color}; font-weight: bold' if col == 'Difference' else '' for col in row.index]
 
-            st.dataframe(
-                udf.style.apply(style_util, axis=1),
-                use_container_width=True, 
-                hide_index=True
-            )
+            st.dataframe(udf.style.apply(style_util, axis=1), use_container_width=True, hide_index=True)
 
 st.markdown('---')
 
@@ -368,15 +396,72 @@ if p_ind and p_sub > 0 and not INDUSTRY_BENCHMARKS_DF.empty:
     with m_col: st.metric("Projected Annual Cases", f"{tot_p:,.1f}")
     with t_col: 
         pdf = pdf[pdf['Projected Cases'] > 0.01]
-        # Pre-format as strings to avoid errors
         pdf['Projected Cases'] = pdf['Projected Cases'].map('{:,.1f}'.format)
         pdf['% of Total'] = pdf['% of Total'].map('{:.1f}%'.format)
+        st.dataframe(pdf, use_container_width=True, hide_index=True)
+
+st.markdown('---')
+
+# --- SECTION 4: DATA-DRIVEN SCENARIO PLANNER ---
+st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">4. "What-If" Scenario Planner (Data-Driven)</h2>', unsafe_allow_html=True)
+st.write("This tool uses the **actual correlation slope** observed in your data (Section 2 chart) to predict impact. Adjust the slider to see how increased utilization might affect cases.")
+
+sc_col1, sc_col2 = st.columns([1, 1])
+
+# Determine the industry context for slope calculation
+slope_industry = metrics['Industry'] if metrics else p_ind
+
+if slope_industry:
+    # Calculate Real Slope
+    slope, r_val = calculate_data_driven_slope(RAW_DATA_DF, slope_industry)
+    
+    with sc_col1:
+        st.subheader("Step 1: Adjust Strategy")
+        util_increase_pct = st.slider("Increase Total Utilization (%)", 0, 200, 0)
         
-        st.dataframe(
-            pdf,
-            use_container_width=True,
-            hide_index=True
-        )
+        st.markdown(f"""
+        <div style="font-size:14px; color:grey; margin-top:10px;">
+            <b>Data Insight:</b> The observed trend for <i>{slope_industry}</i> is a slope of <b>{slope:.4f}</b>.<br>
+            (A negative slope means higher utilization is correlated with lower cases).
+        </div>
+        """, unsafe_allow_html=True)
+
+    with sc_col2:
+        st.subheader("Step 2: Projected Impact")
+        
+        # Get baseline values for the selected client OR the projection default
+        if client_row_data is not None:
+            base_util_rate = client_row_data['Utilization_Per_Subscriber']
+            base_case_rate = client_row_data['Cases_Per_Subscriber']
+            base_subs = client_row_data['Subscribers']
+        else:
+            # Fallback to projection inputs if no client selected
+            # Need average util rate for this industry to make it work
+            ind_row_avg = INDUSTRY_BENCHMARKS_DF[INDUSTRY_BENCHMARKS_DF['Business_Industry'] == slope_industry].iloc[0]
+            base_util_sum = [col + "_Rate" for col in UTIL_COLUMNS]
+            base_util_rate = sum(ind_row_avg[c] for c in base_util_sum)
+            base_case_rate = ind_row_avg['Total_Cases_Rate']
+            base_subs = p_sub
+
+        if slope < 0:
+             new_cases, prevented = run_what_if_scenario_data_driven(base_util_rate, base_case_rate, base_subs, util_increase_pct, slope)
+             
+             mc1, mc2 = st.columns(2)
+             with mc1:
+                 st.metric("New Projected Cases", f"{new_cases:,.1f}", delta=f"-{prevented:,.1f} prevented", delta_color="normal")
+             
+             st.markdown(f"""
+             <div style="background-color:#e6fffa; padding:15px; border-radius:5px; border:1px solid {BENCHMARK_COLOR_GOOD}; margin-top:20px;">
+                <p style="color:{BENCHMARK_COLOR_GOOD}; font-weight:bold; margin:0;">
+                    Based on historical data for {slope_industry}, increasing utilization by {util_increase_pct}% 
+                    correlates with preventing approx. {prevented:.1f} cases.
+                </p>
+             </div>
+             """, unsafe_allow_html=True)
+        elif slope > 0:
+             st.warning(f"Data for {slope_industry} currently shows a positive correlation (slope: {slope:.3f}). Increasing utilization is associated with HIGHER case counts in this dataset (likely due to high-risk nature), so a reduction cannot be projected.")
+        else:
+             st.info("Not enough data points in this industry to calculate a reliable trend.")
 
 st.markdown('---')
 st.markdown(f"""
