@@ -21,24 +21,28 @@ def load_data():
         benchmark_df = pd.read_csv("app_industry_benchmark.csv")
         
         # --- EXPLICIT COLUMN CLEANUP AND VERIFICATION ---
-        # 1. Standardize column names by stripping whitespace (a common CSV issue)
+        # 1. Standardize column names by stripping whitespace
         raw_df.columns = raw_df.columns.str.strip()
         benchmark_df.columns = benchmark_df.columns.str.strip()
         
-        # 2. Rename columns to GUARANTEED clean names if they contain the required string
-        # This fixes issues with invisible characters or complex spacing
+        # 2. Identify the Business Industry column and rename it to a guaranteed clean name ('Clean_Industry')
+        # This fixes issues with invisible characters in the column name.
         
-        # Look for the correct Business Industry column in the raw data
-        if 'Business_Industry' in raw_df.columns:
-            raw_df.rename(columns={'Business_Industry': 'Clean_Industry'}, inplace=True)
-            benchmark_df.rename(columns={'Business_Industry': 'Clean_Industry'}, inplace=True)
-        elif 'Industry' in raw_df.columns: # Fallback check
-            raw_df.rename(columns={'Industry': 'Clean_Industry'}, inplace=True)
-            benchmark_df.rename(columns={'Industry': 'Clean_Industry'}, inplace=True)
+        # Find the column that contains 'Business_Industry' (robust lookup)
+        industry_col_raw = [col for col in raw_df.columns if 'Business_Industry' in col]
+        industry_col_bench = [col for col in benchmark_df.columns if 'Business_Industry' in col]
+        
+        if industry_col_raw and industry_col_bench:
+            raw_df.rename(columns={industry_col_raw[0]: 'Clean_Industry'}, inplace=True)
+            benchmark_df.rename(columns={industry_col_bench[0]: 'Clean_Industry'}, inplace=True)
+        else:
+            # Fallback for error handling if columns still aren't found
+            st.error("Data structure error: Cannot locate 'Business_Industry' column even after initial cleanup.")
+            return pd.DataFrame(), pd.DataFrame()
         
         # 3. Final data checks
         if 'Clean_Industry' not in raw_df.columns or 'Clean_Industry' not in benchmark_df.columns:
-             st.error("Data structure error: Cannot find the necessary 'Business Industry' column even after cleanup.")
+             # This check should now only fail if the data is genuinely missing
              return pd.DataFrame(), pd.DataFrame()
         
         # Ensure AccountID is string for stable selectbox keying
