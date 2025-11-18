@@ -70,20 +70,22 @@ def get_client_data(account_id):
     
     client_data = client_row.to_dict()
     
-    # Calculate client's utilization and case rates per subscriber
-    RATE_COLS = [col for col in BENCHMARK_DF.columns if 'Per Subscriber' in col]
+    # Get the list of all case and utilization columns from the benchmark data (e.g., 'Total Cases', 'Medical Cases', etc.)
+    # We strip ' Per Subscriber' to get the original raw column names
+    RATE_COL_NAMES = [col.replace(' Per Subscriber', '').strip() 
+                      for col in BENCHMARK_DF.columns if 'Per Subscriber' in col]
     
     # Use the 'Subscribers' column from the raw data
     subscribers = client_data.get('Subscribers', 0)
     
-    for col in RATE_COLS:
-        # Extract the original column name (e.g., 'Total Cases Per Subscriber' -> 'Total Cases')
-        original_col_name = col.replace(' Per Subscriber', '').strip()
+    # Calculate client's utilization and case rates per subscriber (This section was fixed)
+    for original_col_name in RATE_COL_NAMES:
+        rate_col_name = f"{original_col_name} Per Subscriber"
         
         if subscribers > 0 and original_col_name in client_data:
-            client_data[col] = client_data[original_col_name] / subscribers
+            client_data[rate_col_name] = client_data[original_col_name] / subscribers
         else:
-            client_data[col] = 0
+            client_data[rate_col_name] = 0
 
     return client_data
 
@@ -101,7 +103,7 @@ def benchmark_client(client_data, industry_benchmark_df):
     
     results = {}
     
-    # 1. Case Load Benchmarking
+    # 1. Case Load Benchmarking (This reference is now safe as it's generated in get_client_data)
     total_cases_rate_client = client_data['Total Cases Per Subscriber']
     total_cases_rate_industry = industry_row['Total Cases Per Subscriber']
     
@@ -157,7 +159,7 @@ def get_sentiment(diff_percent, is_case_load=False):
         if diff_percent > 10:
             return "High (Good)", BENCHMARK_COLOR_GOOD
         elif diff_percent < -10:
-            return "Low (Caution)", BENCHMARK_COLOR_BAD
+            return "Low (Caution)", BRAND_COLOR_BAD
         else:
             return "On Par", BRAND_COLOR_BLUE
 
