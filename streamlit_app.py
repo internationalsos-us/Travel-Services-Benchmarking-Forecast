@@ -9,20 +9,50 @@ BRAND_COLOR_DARK = "#232762"
 BENCHMARK_COLOR_GOOD = "#009354"
 BENCHMARK_COLOR_BAD = "#D4002C"
 
-# --- Column Definitions (CRITICAL: Derived from your CSV headers) ---
-# Use these exact names to look up data in the DataFrames
-RAW_ACCOUNT_COLS = ['AccountID', 'Business_Industry', 'Subscribers', 'Customer_Since']
+# --- Column Mapping (Based on your specific instructions) ---
+# Keys are the CSV headers, Values are internal friendly names
+COLUMN_MAP = {
+    "Account_ID": "AccountID",
+    "Business_Industry": "Business_Industry",
+    "WFR": "WFR",
+    "Subscribers": "Subscribers",
+    "Customer_Since": "Customer_Since",
+    "App_and_Portal_Sessions": "App_and_Portal_Sessions",
+    "Alerts_Sent_to_Travelers": "Alerts_Sent_to_Travelers",
+    "Pre_Trip_Advisories_Sent": "Pre_Trip_Advisories_Sent",
+    "E_Learning_Completed_Courses": "E_Learning_Completed_Courses",
+    "Travel_Cases": "Travel_Cases",
+    "Medical_Cases_Information_and_Analysis": "Medical_Cases_IA",
+    "Medical_Cases_Out_Patient": "Medical_Cases_OutPatient",
+    "Medical_Cases_In_Patient": "Medical_Cases_InPatient",
+    "Medical_Cases_Evacuation_Repatriation_RMR": "Medical_Cases_Evac",
+    "Security_Cases_Information_and_Analysis": "Security_Cases_IA",
+    "Security_Cases_Referrals": "Security_Cases_Referrals",
+    "Security_Cases_Interventional_Assistance": "Security_Cases_Intervention",
+    "Security_cases_Evacuation": "Security_Cases_Evac",
+    "Security_cases_Active_Monitoring": "Security_Cases_ActiveMonitoring"
+}
 
-RAW_CASE_COLS = [
-    'Travel Cases', 'Medical Cases: I&A', 'Medical Cases: Out-Patient', 
-    'Medical Cases: In-Patient', 'Medical Cases: Evacuation / Repatriation, & RMR', 
-    'Security cases: I&A', 'Security cases: Referral', 'Security cases: Interventional Assistance', 
-    'Security cases: Evacuation', 'Security cases: Active Monitoring'
+# List of columns that represent CASES (J through S)
+CASE_COLUMNS = [
+    "Travel_Cases",
+    "Medical_Cases_IA",
+    "Medical_Cases_OutPatient",
+    "Medical_Cases_InPatient",
+    "Medical_Cases_Evac",
+    "Security_Cases_IA",
+    "Security_Cases_Referrals",
+    "Security_Cases_Intervention",
+    "Security_Cases_Evac",
+    "Security_Cases_ActiveMonitoring"
 ]
 
-RAW_UTIL_COLS = [
-    'App & Portal Sessions', 'Alerts Sent to Travellers', 
-    'Pre Trip Advisories Sent', 'DLP Completed Courses'
+# List of columns that represent UTILIZATION (F through I)
+UTIL_COLUMNS = [
+    "App_and_Portal_Sessions",
+    "Alerts_Sent_to_Travelers",
+    "Pre_Trip_Advisories_Sent",
+    "E_Learning_Completed_Courses"
 ]
 
 # --- Data Loading and Preprocessing ---
@@ -30,28 +60,37 @@ RAW_UTIL_COLS = [
 @st.cache_data
 def load_data():
     try:
-        raw_df = pd.read_csv("app_raw_data.csv")
+        # Load the single raw data file
+        # NOTE: Ensure the file in GitHub is named 'app_raw_data.csv'
+        df = pd.read_csv("app_raw_data.csv")
         
-        # --- CRITICAL CLEANUP: Strip whitespace and standardize headers ---
-        raw_df.columns = raw_df.columns.str.strip()
+        # 1. Rename columns to match our internal mapping for consistency
+        # This handles potential minor variances in the CSV header formatting
+        # by using a case-insensitive lookup if needed, but for now we map directly.
+        # We invert the map to rename FROM csv TO internal
         
-        # Rename columns to standardized names for predictable internal access
-        raw_df.rename(columns={
-            'Business_Industry': 'Clean_Industry', 
-            'Customer_Since': 'Customer_Since_Clean',
-            'Total Cases': 'Total_Cases_Client_Raw' # The original total case count column
-        }, inplace=True, errors='ignore')
+        # Clean whitespace from CSV headers first
+        df.columns = df.columns.str.strip()
         
-        # Calculate TOTAL CASES for comparison and rates
-        raw_df['Total_Cases_Calculated'] = raw_df[RAW_CASE_COLS].sum(axis=1)
+        # Check if required columns exist (using the keys from your instruction)
+        missing_cols = [col for col in COLUMN_MAP.keys() if col not in df.columns]
+        if missing_cols:
+            st.error(f"Missing columns in CSV: {missing_cols}")
+            return pd.DataFrame()
+            
+        # Rename to internal names
+        df = df.rename(columns=COLUMN_MAP)
         
-        # Data Type Conversion
-        raw_df['AccountID'] = raw_df['AccountID'].astype(str)
-        raw_df['Customer_Since_Clean'] = pd.to_datetime(raw_df['Customer_Since_Clean'], errors='coerce')
+        # 2. Data Type Conversion
+        df['AccountID'] = df['AccountID'].astype(str)
+        df['Customer_Since'] = pd.to_datetime(df['Customer_Since'], errors='coerce')
         
-        return raw_df
+        # 3. Calculate Total Cases (Sum of all case columns)
+        df['Total_Cases_Calculated'] = df[CASE_COLUMNS].sum(axis=1)
+        
+        return df
     except FileNotFoundError:
-        st.error("Data file (app_raw_data.csv) not found. Please ensure it is uploaded.")
+        st.error("Data file 'app_raw_data.csv' not found. Please upload it.")
         return pd.DataFrame()
 
 RAW_DATA_DF = load_data()
@@ -60,413 +99,285 @@ RAW_DATA_DF = load_data()
 # --- Core Logic Functions ---
 
 @st.cache_data
-def calculate_industry_benchmarks(df):
-    """Calculates all necessary industry average rates from the raw data."""
+def calculate_industry_averages(df):
+    """
+    Calculates the weighted average rates (per subscriber) for each industry.
+    This creates the 'Benchmark' dataset dynamically from the raw data.
+    """
     if df.empty:
         return pd.DataFrame()
-    
-    # 1. Prepare aggregation dictionary
-    agg_dict = {
-        'Total_Subscribers': pd.NamedAgg(column='Subscribers', aggfunc='sum')
-    }
-    
-    # Add all case and utilization columns to the aggregation dictionary
-    all_count_cols = RAW_CASE_COLS + RAW_UTIL_COLS + ['Total_Cases_Calculated']
-    for col in all_count_cols:
-        agg_dict[col] = pd.NamedAgg(column=col, aggfunc='sum')
-    
-    # 2. Aggregate sums by Business Industry
-    industry_agg = df.groupby('Clean_Industry').agg(**agg_dict).reset_index()
-    
-    # 3. Calculate "Rate per Subscriber" for Cases and Utilization
-    for col in all_count_cols:
-        # Avoid division by zero
-        rate_col = f"{col} Per Subscriber"
-        industry_agg[rate_col] = np.where(
-            industry_agg['Total_Subscribers'] > 0, 
-            industry_agg[col] / industry_agg['Total_Subscribers'], 
-            0
-        )
         
-    return industry_agg
-
-INDUSTRY_BENCHMARK_DF = calculate_industry_benchmarks(RAW_DATA_DF)
-
-
-def get_client_data(account_id, df_raw):
-    """Retrieves client data and calculates all necessary rates."""
-    if df_raw.empty:
-        return None
+    # Group by Industry
+    industry_groups = df.groupby('Business_Industry')
     
-    client_row = df_raw[df_raw['AccountID'] == account_id].iloc[0]
-    client_data = client_row.to_dict()
-    client_data = {key.strip(): value for key, value in client_data.items()} # Clean dict keys
+    benchmarks = []
     
-    subscribers = client_data.get('Subscribers', 0)
-    
-    # Define all base columns that need a 'Per Subscriber' rate calculation
-    ALL_RATE_BASE_COLS = RAW_CASE_COLS + RAW_UTIL_COLS + ['Total_Cases_Calculated']
-    
-    # Calculate client's utilization and case rates per subscriber
-    for original_col_name in ALL_RATE_BASE_COLS:
-        rate_col_name = f"{original_col_name} Per Subscriber"
-        raw_value = client_data.get(original_col_name, 0)
+    for industry, group in industry_groups:
+        total_subscribers = group['Subscribers'].sum()
         
-        if subscribers > 0 and raw_value != 0:
-            client_data[rate_col_name] = raw_value / subscribers
-        else:
-            client_data[rate_col_name] = 0
-
-    return client_data
-
-def benchmark_client(client_data, industry_benchmark_df):
-    """Performs client vs industry comparison."""
-    
-    industry = client_data['Clean_Industry'] 
-    industry_row_match = industry_benchmark_df[industry_benchmark_df['Clean_Industry'] == industry]
-    
-    if industry_row_match.empty:
-        return {'CaseLoad_Diff': 0, 'Util_Comparison': pd.DataFrame()}
-        
-    industry_row = industry_row_match.iloc[0]
-    
-    results = {}
-    
-    # 1. Case Load Benchmarking (Total Cases)
-    total_cases_rate_client = client_data['Total_Cases_Calculated Per Subscriber']
-    total_cases_rate_industry = industry_row['Total_Cases_Calculated Per Subscriber']
-    
-    if total_cases_rate_industry > 0:
-        case_diff = ((total_cases_rate_client - total_cases_rate_industry) / total_cases_rate_industry) * 100
-    else:
-        case_diff = 0
-    
-    results['CaseLoad_Diff'] = case_diff
-    
-    # 2. Utilization Benchmarking (F, G, H, I)
-    util_cols_map = {
-        'App & Portal Sessions': 'App & Portal Sessions Per Subscriber',
-        'Alerts Sent to Travellers': 'Alerts Sent to Travellers Per Subscriber',
-        'Pre Trip Advisories Sent': 'Pre Trip Advisories Sent Per Subscriber',
-        'DLP Completed Courses': 'DLP Completed Courses Per Subscriber'
-    }
-    
-    util_comparison_table = []
-    
-    for metric_base_name, industry_rate_col in util_cols_map.items():
-        client_rate_col = f"{metric_base_name} Per Subscriber"
-        
-        client_rate = client_data.get(client_rate_col, 0)
-        industry_rate = industry_row[industry_rate_col]
-        
-        if industry_rate > 0:
-            diff_percent = ((client_rate - industry_rate) / industry_rate) * 100
-        else:
-            diff_percent = 0
+        if total_subscribers == 0:
+            continue
             
-        util_comparison_table.append({
-            'Metric': metric_base_name,
-            'Client Rate': client_rate,
-            'Industry Avg Rate': industry_rate,
-            'Difference (%)': diff_percent
-        })
+        # Calculate weighted average rate for each Case Type and Utilization metric
+        # Formula: Sum of (Cases) / Sum of (Subscribers)
         
-    results['Util_Comparison'] = pd.DataFrame(util_comparison_table)
-    
-    return results
+        industry_data = {
+            'Business_Industry': industry,
+            'Total_Subscribers_Base': total_subscribers
+        }
+        
+        # Case Rates
+        for col in CASE_COLUMNS:
+            total_cases_in_industry = group[col].sum()
+            industry_data[f"{col}_Rate"] = total_cases_in_industry / total_subscribers
+            
+        # Utilization Rates
+        for col in UTIL_COLUMNS:
+            total_util_in_industry = group[col].sum()
+            industry_data[f"{col}_Rate"] = total_util_in_industry / total_subscribers
+            
+        # Total Cases Rate
+        total_all_cases = group['Total_Cases_Calculated'].sum()
+        industry_data['Total_Cases_Rate'] = total_all_cases / total_subscribers
+        
+        benchmarks.append(industry_data)
+        
+    return pd.DataFrame(benchmarks)
 
-def get_sentiment(diff_percent, is_case_load=False):
-    """Returns classification and color based on difference percentage."""
-    if is_case_load:
-        if diff_percent < -10:
-            return "Low (Good)", BENCHMARK_COLOR_GOOD
-        elif diff_percent > 10:
-            return "High (Caution)", BENCHMARK_COLOR_BAD
-        else:
-            return "On Par", BRAND_COLOR_BLUE
-    else:
-        if diff_percent > 10:
-            return "High (Good)", BENCHMARK_COLOR_GOOD
-        elif diff_percent < -10:
-            return "Low (Caution)", BENCHMARK_COLOR_BAD
-        else:
-            return "On Par", BRAND_COLOR_BLUE
+INDUSTRY_BENCHMARKS_DF = calculate_industry_averages(RAW_DATA_DF)
 
-def create_case_type_table(client_data):
-    """Creates a table for client's total cases by type."""
+
+def get_client_metrics(account_id, raw_df, benchmark_df):
+    """Retrieves client data and compares it to their industry benchmark."""
+    if raw_df.empty:
+        return None
+        
+    # 1. Get Client Row
+    client_row = raw_df[raw_df['AccountID'] == account_id].iloc[0]
+    client_industry = client_row['Business_Industry']
+    client_subs = client_row['Subscribers']
     
-    case_type_display_map = {
-        'Travel Cases': 'Travel Disruptions', 
-        'Medical Cases: I&A': 'Medical - Information & Analysis', 
-        'Medical Cases: Out-Patient': 'Medical - Out-Patient', 
-        'Medical Cases: In-Patient': 'Medical - In-Patient', 
-        'Medical Cases: Evacuation / Repatriation, & RMR': 'Medical - Evac/Repat/RMR',
-        'Security cases: I&A': 'Security - Information & Analysis', 
-        'Security cases: Referral': 'Security - Referrals', 
-        'Security cases: Interventional Assistance': 'Security - Interventions', 
-        'Security cases: Evacuation': 'Security - Evacuations', 
-        'Security cases: Active Monitoring': 'Security - Active Monitoring'
+    # 2. Get Industry Benchmark Row
+    industry_row = benchmark_df[benchmark_df['Business_Industry'] == client_industry].iloc[0]
+    
+    metrics = {
+        'Client_Name': str(client_row['AccountID']), # Using ID as Name based on header desc
+        'Industry': client_industry,
+        'Subscribers': client_subs,
+        'Customer_Since': client_row['Customer_Since'],
+        'Benchmark_Results': {}
     }
     
-    table_data = []
-    for raw_col, display_name in case_type_display_map.items():
-        table_data.append({
-            'Case Type': display_name, 
-            'Total Cases': client_data.get(raw_col, 0)
-        })
-    
-    df = pd.DataFrame(table_data)
-    
-    total = client_data.get('Total_Cases_Calculated', 0)
-    
-    df['% of Total'] = (df['Total Cases'] / total) * 100 if total > 0 else 0
-    
-    return df
+    if client_subs > 0:
+        # --- Case Load Comparison ---
+        client_total_rate = client_row['Total_Cases_Calculated'] / client_subs
+        ind_total_rate = industry_row['Total_Cases_Rate']
+        
+        if ind_total_rate > 0:
+            diff = ((client_total_rate - ind_total_rate) / ind_total_rate) * 100
+        else:
+            diff = 0
+            
+        metrics['Case_Load_Diff'] = diff
+        
+        # --- Detailed Case Breakdown (Client Totals) ---
+        metrics['Client_Case_Totals'] = {col: client_row[col] for col in CASE_COLUMNS}
+        
+        # --- Utilization Comparison ---
+        util_comparison = []
+        for col in UTIL_COLUMNS:
+            c_rate = client_row[col] / client_subs
+            i_rate = industry_row[f"{col}_Rate"]
+            
+            if i_rate > 0:
+                u_diff = ((c_rate - i_rate) / i_rate) * 100
+            else:
+                u_diff = 0
+            
+            util_comparison.append({
+                'Metric': col.replace('_', ' '),
+                'Client Rate': c_rate,
+                'Industry Avg': i_rate,
+                'Difference (%)': u_diff
+            })
+        metrics['Util_Comparison'] = pd.DataFrame(util_comparison)
+        
+    return metrics
 
-# --- Page Setup ---
+def run_projection(subscribers, industry, benchmark_df):
+    """Calculates projected cases for a hypothetical number of subscribers."""
+    if benchmark_df.empty:
+        return pd.DataFrame()
+        
+    industry_row = benchmark_df[benchmark_df['Business_Industry'] == industry].iloc[0]
+    
+    projections = []
+    total_proj = 0
+    
+    for col in CASE_COLUMNS:
+        rate = industry_row[f"{col}_Rate"]
+        proj_count = rate * subscribers
+        total_proj += proj_count
+        
+        # User friendly name mapping
+        display_name = col.replace('Medical_Cases_', 'Medical - ').replace('Security_Cases_', 'Security - ').replace('_', ' ')
+        
+        projections.append({
+            'Case Type': display_name,
+            'Projected Cases': proj_count
+        })
+        
+    df = pd.DataFrame(projections)
+    if total_proj > 0:
+        df['% of Total'] = (df['Projected Cases'] / total_proj) * 100
+    else:
+        df['% of Total'] = 0
+        
+    return df, total_proj
+
+# --- Helper for Styling ---
+def get_diff_color(val, invert=False):
+    if invert: # For Cases (Lower is usually better/good, Higher is bad)
+        if val < -10: return BENCHMARK_COLOR_GOOD
+        if val > 10: return BENCHMARK_COLOR_BAD
+    else: # For Utilization (Higher is usually better/good)
+        if val > 10: return BENCHMARK_COLOR_GOOD
+        if val < -10: return BENCHMARK_COLOR_BAD
+    return BRAND_COLOR_BLUE
+
+# --- Main App Layout ---
 
 st.set_page_config(page_title="International SOS | Benchmarking", layout="wide")
 
+# Banner
 st.markdown(f"""
-<style>
-.banner-container {{
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    background-color: {BRAND_COLOR_DARK};
-    padding: 20px;
-}}
-.banner-title {{
-    color: white !important;
-    margin: 0;
-    flex: 1;
-    min-width: 250px;
-    font-size: 28px;
-    order: 1;
-    text-align: left;
-}}
-@media (max-width: 768px) {{
-    .banner-title {{ font-size: 22px; }}
-}}
-</style>
-
-<div class="banner-container">
-    <div class="banner-logo">
-        <img src="https://images.learn.internationalsos.com/EloquaImages/clients/InternationalSOS/%7B0769a7db-dae2-4ced-add6-d1a73cb775d5%7D_International_SOS_white_hr_%281%29.png"
-             alt="International SOS" style="height:60px; max-width:100%;">
-    </div>
-    <h1 class="banner-title">
-        Travel Services Benchmarking and Forecast
-    </h1>
+<div style="background-color:{BRAND_COLOR_DARK}; padding:20px; display:flex; align-items:center;">
+    <img src="https://images.learn.internationalsos.com/EloquaImages/clients/InternationalSOS/%7B0769a7db-dae2-4ced-add6-d1a73cb775d5%7D_International_SOS_white_hr_%281%29.png" style="height:50px; margin-right:20px;">
+    <h1 style="color:white; margin:0; font-size:24px;">Travel Services Benchmarking and Forecast</h1>
 </div>
 """, unsafe_allow_html=True)
 
 st.write("")
 st.markdown(f'<h1 style="color:{BRAND_COLOR_DARK};">Assistance Activity and ROI Benchmark</h1>', unsafe_allow_html=True)
-st.write("Compare client assistance activity against industry peers and project future case load.")
+st.write("Compare client assistance activity against industry peers (calculated dynamically from raw data).")
 st.markdown('---')
 
-# --- FIRST SECTION: Benchmarking ---
+# --- SECTION 1: Benchmarking ---
 st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">1. Account Benchmarking & Utilization Analysis</h2>', unsafe_allow_html=True)
 
 if RAW_DATA_DF.empty:
-    st.warning("Cannot run the app. Data file is required.")
     st.stop()
 
-# 1.1 Input Fields
-account_id_list = sorted(RAW_DATA_DF['AccountID'].astype(str).unique().tolist())
-selected_account_id = st.selectbox("1.1 Account ID (Select to look up)", [''] + account_id_list)
+# 1.1 Inputs
+ids = sorted(RAW_DATA_DF['AccountID'].unique())
+selected_id = st.selectbox("1.1 Select Account ID", ids)
 
-if selected_account_id:
-    client_data = get_client_data(selected_account_id, RAW_DATA_DF)
-    benchmarks = benchmark_client(client_data, INDUSTRY_BENCHMARK_DF)
+if selected_id:
+    metrics = get_client_metrics(selected_id, RAW_DATA_DF, INDUSTRY_BENCHMARKS_DF)
     
-    # Retrieve auto-populated fields
-    customer_since_date = client_data.get('Customer_Since_Clean', pd.NaT)
-    customer_since_str = customer_since_date.strftime('%Y-%m-%d') if pd.notna(customer_since_date) else 'N/A'
+    # 1.2/1.3 Display
+    c1, c2, c3 = st.columns(3)
+    c1.text_input("1.2 Business Industry", value=metrics['Industry'], disabled=True)
+    c2.text_input("1.3 Number of Subscribers", value=f"{metrics['Subscribers']:,}", disabled=True)
     
-    # 1.2 & 1.3 Auto-populated Fields
-    col_sub, col_ind, col_since = st.columns(3)
-    with col_sub:
-        st.text_input("1.2 Number of Subscribers", value=f"{client_data['Subscribers']:,}", disabled=True)
-    with col_ind:
-        st.text_input("1.3 Business Industry", value=client_data['Clean_Industry'], disabled=True) # Use Clean_Industry
-    with col_since:
-        # Calculate Customer Since duration
-        if pd.notna(customer_since_date):
-            years_since = (datetime.now() - customer_since_date).days / 365.25
-            since_text = f"{customer_since_str} ({years_since:.1f} years)"
-        else:
-            since_text = 'N/A'
-        st.text_input("Customer Since", value=since_text, disabled=True)
-
+    cust_since = metrics['Customer_Since']
+    since_str = cust_since.strftime('%Y-%m-%d') if pd.notna(cust_since) else "N/A"
+    c3.text_input("Customer Since", value=since_str, disabled=True)
+    
     st.markdown('---')
-    st.markdown(f'<h3 style="color:{BRAND_COLOR_DARK};">Case Activity Summary for Account ID: {selected_account_id}</h3>', unsafe_allow_html=True)
     
-    # --- Case Load Comparison ---
-    case_diff = benchmarks['CaseLoad_Diff']
-    case_sentiment, case_color = get_sentiment(case_diff, is_case_load=True)
+    # Summary
+    diff = metrics['Case_Load_Diff']
+    color = get_diff_color(diff, invert=True) # Negative diff is Good for cases
     
-    col_metric, col_chart = st.columns([1, 2])
+    c_metric, c_chart = st.columns([1, 2])
     
-    with col_metric:
+    with c_metric:
         st.markdown(f"""
-        <div style="background-color: #f7f7f7; padding: 15px; border-radius: 8px; text-align: center;">
-            <p style="font-size: 16px; margin-bottom: 0; color: grey;">Total Cases vs. Industry Average</p>
-            <h1 style="color: {case_color}; font-size: 40px; margin: 0;">{case_sentiment}</h1>
-            <p style="font-size: 20px; margin-top: 5px; color: {case_color};">
-                {abs(case_diff):.1f}% {'Below' if case_diff < 0 else 'Above'} Avg.
+        <div style="background-color:#f0f2f6; padding:20px; border-radius:10px; text-align:center;">
+            <h3 style="margin:0; color:{BRAND_COLOR_DARK}">Total Case Load</h3>
+            <h1 style="font-size:48px; margin:10px 0; color:{color}">{abs(diff):.1f}%</h1>
+            <p style="font-size:18px; font-weight:bold; color:{color}">
+                {'BELOW' if diff < 0 else 'ABOVE'} Industry Avg
             </p>
         </div>
         """, unsafe_allow_html=True)
+        
+    with c_chart:
+        # Create Breakdown DF
+        breakdown_data = []
+        for col, val in metrics['Client_Case_Totals'].items():
+            name = col.replace('Medical_Cases_', 'Med - ').replace('Security_Cases_', 'Sec - ').replace('_', ' ')
+            breakdown_data.append({'Case Type': name, 'Cases': val})
+        
+        bd_df = pd.DataFrame(breakdown_data)
+        total_c = bd_df['Cases'].sum()
+        bd_df['%'] = (bd_df['Cases'] / total_c) * 100 if total_c > 0 else 0
+        
+        st.subheader("Client Case Breakdown")
+        st.dataframe(bd_df.style.format({'%': '{:.1f}%'}), use_container_width=True, hide_index=True)
 
-    with col_chart:
-        # Display client's total cases by case type
-        case_df_for_display = create_case_type_table(client_data)
-        st.subheader("Total Cases by Case Type")
-        st.dataframe(
-            case_df_for_display.style.format({'% of Total': '{:.1f}%', 'Total Cases': '{:,.0f}'}), 
-            hide_index=True, 
-            use_container_width=True
-        )
-
-    st.markdown('---')
-    st.markdown(f'<h3 style="color:{BRAND_COLOR_DARK};">Utilization Analysis: Client vs. Industry Average</h3>', unsafe_allow_html=True)
+    st.write("")
+    st.markdown(f'<h3 style="color:{BRAND_COLOR_DARK};">Utilization Analysis</h3>', unsafe_allow_html=True)
     
-    # --- Utilization Comparison ---
-    util_df = benchmarks['Util_Comparison']
+    util_df = metrics['Util_Comparison']
     
-    def style_util_diff(val):
-        sentiment, color = get_sentiment(val, is_case_load=False)
-        return f'color: {color}; font-weight: bold; background-color: #f0fff0' if sentiment == 'High (Good)' else f'color: {color}'
+    def style_util(val):
+        color = get_diff_color(val, invert=False) # Positive is Good for utilization
+        return f'color: {color}; font-weight: bold'
 
-    # Format and display utilization table
     st.dataframe(
         util_df.style.format({
-            'Client Rate': '{:.3f}', 
-            'Industry Avg Rate': '{:.3f}', 
+            'Client Rate': '{:.4f}',
+            'Industry Avg': '{:.4f}',
             'Difference (%)': '{:+.1f}%'
-        }).applymap(style_util_diff, subset=['Difference (%)']),
+        }).applymap(style_util, subset=['Difference (%)']),
         use_container_width=True,
         hide_index=True
     )
 
-    st.markdown(f'<p><i>Utilization metrics are normalized by the number of subscribers. Analysis shows whether the client\'s utilization (App, Alerts, Advisories, DLP) is leading to more or less assistance cases compared to the industry average.</i></p>', unsafe_allow_html=True)
-    
-else:
-    st.info("Please select an Account ID to view the benchmarking report.")
-
 st.markdown('---')
 
-# --- SECOND SECTION: Projection Model ---
-st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">2. Case Projection Model (Industry Average)</h2>', unsafe_allow_html=True)
+# --- SECTION 2: Projection ---
+st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">2. Case Projection Model</h2>', unsafe_allow_html=True)
 
-if INDUSTRY_BENCHMARK_DF.empty:
-    st.info("Cannot run projection. Data files are required.")
-    st.stop()
-    
-# 2.1 & 2.2 Input Fields
-col_proj_ind, col_proj_sub = st.columns(2)
-with col_proj_ind:
-    industry_list = sorted(INDUSTRY_BENCHMARK_DF['Clean_Industry'].unique().tolist())
-    proj_industry = st.selectbox("2.1 Select Business Industry", industry_list)
-with col_proj_sub:
-    proj_subscribers = st.number_input("2.2 Enter Number of Subscribers", min_value=1, value=1000, step=1)
+p1, p2 = st.columns(2)
+with p1:
+    industries = sorted(INDUSTRY_BENCHMARKS_DF['Business_Industry'].unique())
+    # Default to selected client's industry if available
+    def_ix = industries.index(metrics['Industry']) if selected_id and metrics['Industry'] in industries else 0
+    proj_ind = st.selectbox("2.1 Select Industry", industries, index=def_ix)
+with p2:
+    # Default to selected client's subs if available
+    def_sub = int(metrics['Subscribers']) if selected_id else 1000
+    proj_sub = st.number_input("2.2 Subscribers", min_value=1, value=def_sub)
 
-if proj_industry:
-    proj_row = INDUSTRY_BENCHMARK_DF[INDUSTRY_BENCHMARK_DF['Clean_Industry'] == proj_industry].iloc[0]
+if proj_ind and proj_sub:
+    proj_df, total_p = run_projection(proj_sub, proj_ind, INDUSTRY_BENCHMARKS_DF)
     
-    # Calculate projected cases
-    projection_data = []
-    total_projected_cases = 0
+    c_p_metric, c_p_table = st.columns([1, 2])
+    with c_p_metric:
+        st.metric("Projected Total Cases (Annual)", f"{total_p:,.1f}")
     
-    # Base columns for projection model (using Industry rates per Subscriber, not per 100)
-    # The rates were calculated in calculate_industry_benchmarks
-    PROJECTION_RATE_COLS = [f"{col} Per Subscriber" for col in RAW_CASE_COLS]
+    with c_p_table:
+        st.dataframe(
+            proj_df.style.format({'Projected Cases': '{:.1f}', '% of Total': '{:.1f}%'}),
+            use_container_width=True,
+            hide_index=True
+        )
 
-    # Map raw rate column names to final display names
-    PROJECTION_DISPLAY_MAP = {
-        'Travel Cases Per Subscriber': 'Travel Disruptions', 
-        'Medical Cases: I&A Per Subscriber': 'Medical - Information & Analysis', 
-        'Medical Cases: Out-Patient Per Subscriber': 'Medical - Out-Patient', 
-        'Medical Cases: In-Patient Per Subscriber': 'Medical - In-Patient', 
-        'Medical Cases: Evacuation / Repatriation, & RMR Per Subscriber': 'Medical - Evac/Repat/RMR',
-        'Security cases: I&A Per Subscriber': 'Security - Information & Analysis', 
-        'Security cases: Referral Per Subscriber': 'Security - Referrals', 
-        'Security cases: Interventional Assistance Per Subscriber': 'Security - Interventions', 
-        'Security cases: Evacuation Per Subscriber': 'Security - Evacuations', 
-        'Security cases: Active Monitoring Per Subscriber': 'Security - Active Monitoring'
-    }
-    
-    for rate_col in PROJECTION_RATE_COLS:
-        case_rate = proj_row.get(rate_col, 0)
-        projected_cases = case_rate * proj_subscribers
-        total_projected_cases += projected_cases
-        
-        # Determine the display name
-        base_name = rate_col.replace(' Per Subscriber', '')
-        display_name = PROJECTION_DISPLAY_MAP.get(base_name, base_name)
-        
-        projection_data.append({
-            'Case Type': display_name,
-            'Projected Cases (Last 12 Months)': projected_cases
-        })
-
-    proj_df = pd.DataFrame(projection_data)
-    
-    # Calculate percentage contribution
-    proj_df['% of Total Projected Cases'] = (proj_df['Projected Cases (Last 12 Months)'] / total_projected_cases) * 100
-    
-    # Display Results
-    st.markdown(f'<h3 style="color:{BRAND_COLOR_DARK};">Projected Annual Cases for {proj_industry}</h3>', unsafe_allow_html=True)
-    
-    col_total, col_empty = st.columns(2)
-    with col_total:
-         st.metric("Total Projected Cases", f"{total_projected_cases:,.0f}")
-    
-    st.dataframe(
-        proj_df.style.format({
-            'Projected Cases (Last 12 Months)': '{:,.0f}', 
-            '% of Total Projected Cases': '{:.1f}%'
-        }), 
-        hide_index=True, 
-        use_container_width=True
-    )
-
+# --- Footer ---
 st.markdown('---')
-
-# --- Footer Sections ---
-st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">Value Proposition and Next Steps</h2>', unsafe_allow_html=True)
-st.write("""
-This section highlights the services that contribute to the measured ROI and outlines future risk mitigation strategies.
-- **24/7 Support**: Immediate access to medical and security experts worldwide.
-- **Risk Mitigation**: Proactive threat intelligence and risk forecasting.
-- **Duty of Care**: Ensuring compliance with global standards.
-""")
-
-# Get in Touch Section
-st.markdown("""
-<div style="background-color:#232762; padding:40px; text-align:center; margin-top: 40px;">
-    <h2 style="color:white;">How we can support</h2>
-    <p style="color:white; font-size:16px; max-width:700px; margin:auto; margin-bottom:20px;">
-    Protecting your people from health and security threats. 
-    Our comprehensive Travel Risk Management program supports both managers and employees by proactively 
-    identifying, alerting, and managing medical, security, mental wellbeing, and logistical risks.
-    </p>
+st.markdown(f"""
+<div style="text-align:center; color:gray; padding:20px;">
+    <h3 style="color:{BRAND_COLOR_BLUE}">Value Proposition</h3>
+    <p>Highlights services contributing to ROI: 24/7 Support, Risk Mitigation, Duty of Care.</p>
+    <br>
     <a href="https://www.internationalsos.com/get-in-touch?utm_source=benchmarkingreport" target="_blank">
-        <button style="background-color:#EF820F; color:white; font-weight:bold; 
-                       border:none; padding:15px 30px; font-size:16px; cursor:pointer; 
-                       margin-top:15px; border-radius:20px;">
+        <button style="background-color:{BRAND_COLOR_ORANGE}; color:white; border:none; padding:10px 20px; border-radius:5px; cursor:pointer;">
             Get in Touch
         </button>
     </a>
-</div>
-""", unsafe_allow_html=True)
-
-st.write("")
-st.markdown("""
-<div style="text-align:center; font-size:12px; color:gray; margin-top:20px;">
-© 2025 International SOS. WORLDWIDE REACH. HUMAN TOUCH.
+    <p style="margin-top:20px;">© 2025 International SOS. WORLDWIDE REACH. HUMAN TOUCH.</p>
 </div>
 """, unsafe_allow_html=True)
