@@ -8,7 +8,6 @@ BRAND_COLOR_BLUE = "#2f4696"
 BRAND_COLOR_DARK = "#232762"
 BENCHMARK_COLOR_GOOD = "#009354"
 BENCHMARK_COLOR_BAD = "#D4002C"
-BRAND_COLOR_ORANGE = "#EF820F" # Ensure this is defined
 
 # --- Column Mapping (Based on your specific instructions A-S) ---
 # Keys are the CSV headers, Values are internal friendly names
@@ -176,10 +175,11 @@ def get_client_metrics(account_id, raw_df, benchmark_df):
     client_subs = client_row['Subscribers']
     
     # 2. Get Industry Benchmark Row
+    # Handle case where industry might not be in benchmark (e.g. singular data point)
     if client_industry in benchmark_df['Business_Industry'].values:
         industry_row = benchmark_df[benchmark_df['Business_Industry'] == client_industry].iloc[0]
     else:
-        return None 
+        return None # Should not happen if benchmark is built from raw data
     
     metrics = {
         'Client_Name': str(client_row['AccountID']),
@@ -258,10 +258,10 @@ def run_projection(subscribers, industry, benchmark_df):
 
 # --- Helper for Styling ---
 def get_diff_color(val, invert=False):
-    if invert: 
+    if invert: # For Cases (Lower is usually better/good, Higher is bad)
         if val < -10: return BENCHMARK_COLOR_GOOD
         if val > 10: return BENCHMARK_COLOR_BAD
-    else: 
+    else: # For Utilization (Higher is usually better/good)
         if val > 10: return BENCHMARK_COLOR_GOOD
         if val < -10: return BENCHMARK_COLOR_BAD
     return BRAND_COLOR_BLUE
@@ -291,74 +291,82 @@ if RAW_DATA_DF.empty:
 
 # 1.1 Inputs
 ids = sorted(RAW_DATA_DF['AccountID'].unique())
-selected_id = st.selectbox("1.1 Select Account ID", ids)
+# Added placeholder option
+selected_id_val = st.selectbox("1.1 Select Account ID", ["Select here..."] + ids)
 
-if selected_id:
+# Only proceed if a valid ID is selected
+if selected_id_val != "Select here...":
+    selected_id = selected_id_val # Assign to variable used in logic
     metrics = get_client_metrics(selected_id, RAW_DATA_DF, INDUSTRY_BENCHMARKS_DF)
     
-    # 1.2/1.3 Display
-    c1, c2, c3 = st.columns(3)
-    c1.text_input("1.2 Business Industry", value=metrics['Industry'], disabled=True)
-    c2.text_input("1.3 Number of Subscribers", value=f"{metrics['Subscribers']:,}", disabled=True)
-    
-    cust_since = metrics['Customer_Since']
-    since_str = cust_since.strftime('%Y-%m-%d') if pd.notna(cust_since) else "N/A"
-    c3.text_input("Customer Since", value=since_str, disabled=True)
-    
-    st.markdown('---')
-    
-    # Summary
-    diff = metrics.get('Case_Load_Diff', 0)
-    color = get_diff_color(diff, invert=True) 
-    
-    c_metric, c_chart = st.columns([1, 2])
-    
-    with c_metric:
-        st.markdown(f"""
-        <div style="background-color:#f0f2f6; padding:20px; border-radius:10px; text-align:center;">
-            <h3 style="margin:0; color:{BRAND_COLOR_DARK}">Total Case Load</h3>
-            <h1 style="font-size:48px; margin:10px 0; color:{color}">{abs(diff):.1f}%</h1>
-            <p style="font-size:18px; font-weight:bold; color:{color}">
-                {'BELOW' if diff < 0 else 'ABOVE'} Industry Avg
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
+    if metrics:
+        # 1.2/1.3 Display
+        c1, c2, c3 = st.columns(3)
+        c1.text_input("1.2 Business Industry", value=metrics['Industry'], disabled=True)
+        c2.text_input("1.3 Number of Subscribers", value=f"{metrics['Subscribers']:,}", disabled=True)
         
-    with c_chart:
-        # Create Breakdown DF
-        breakdown_data = []
-        if 'Client_Case_Totals' in metrics:
-            for col, val in metrics['Client_Case_Totals'].items():
-                name = col.replace('Medical_Cases_', 'Med - ').replace('Security_Cases_', 'Sec - ').replace('_', ' ')
-                breakdown_data.append({'Case Type': name, 'Cases': val})
+        cust_since = metrics['Customer_Since']
+        since_str = cust_since.strftime('%Y-%m-%d') if pd.notna(cust_since) else "N/A"
+        c3.text_input("Customer Since", value=since_str, disabled=True)
         
-        bd_df = pd.DataFrame(breakdown_data)
-        if not bd_df.empty:
-            total_c = bd_df['Cases'].sum()
-            bd_df['%'] = (bd_df['Cases'] / total_c) * 100 if total_c > 0 else 0
+        st.markdown('---')
+        
+        # Summary
+        diff = metrics.get('Case_Load_Diff', 0)
+        color = get_diff_color(diff, invert=True) # Negative diff is Good for cases
+        
+        c_metric, c_chart = st.columns([1, 2])
+        
+        with c_metric:
+            st.markdown(f"""
+            <div style="background-color:#f0f2f6; padding:20px; border-radius:10px; text-align:center;">
+                <h3 style="margin:0; color:{BRAND_COLOR_DARK}">Total Case Load</h3>
+                <h1 style="font-size:48px; margin:10px 0; color:{color}">{abs(diff):.1f}%</h1>
+                <p style="font-size:18px; font-weight:bold; color:{color}">
+                    {'BELOW' if diff < 0 else 'ABOVE'} Industry Avg
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
             
-            st.subheader("Client Case Breakdown")
-            st.dataframe(bd_df.style.format({'%': '{:.1f}%'}), use_container_width=True, hide_index=True)
+        with c_chart:
+            # Create Breakdown DF
+            breakdown_data = []
+            if 'Client_Case_Totals' in metrics:
+                for col, val in metrics['Client_Case_Totals'].items():
+                    name = col.replace('Medical_Cases_', 'Med - ').replace('Security_Cases_', 'Sec - ').replace('_', ' ')
+                    breakdown_data.append({'Case Type': name, 'Cases': val})
+            
+            bd_df = pd.DataFrame(breakdown_data)
+            if not bd_df.empty:
+                total_c = bd_df['Cases'].sum()
+                bd_df['%'] = (bd_df['Cases'] / total_c) * 100 if total_c > 0 else 0
+                
+                st.subheader("Client Case Breakdown")
+                st.dataframe(bd_df.style.format({'%': '{:.1f}%'}), use_container_width=True, hide_index=True)
 
-    st.write("")
-    st.markdown(f'<h3 style="color:{BRAND_COLOR_DARK};">Utilization Analysis</h3>', unsafe_allow_html=True)
-    
-    if 'Util_Comparison' in metrics:
-        util_df = metrics['Util_Comparison']
+        st.write("")
+        st.markdown(f'<h3 style="color:{BRAND_COLOR_DARK};">Utilization Analysis</h3>', unsafe_allow_html=True)
         
-        def style_util(val):
-            color = get_diff_color(val, invert=False) # Positive is Good for utilization
-            return f'color: {color}; font-weight: bold'
+        if 'Util_Comparison' in metrics:
+            util_df = metrics['Util_Comparison']
+            
+            def style_util(val):
+                color = get_diff_color(val, invert=False) # Positive is Good for utilization
+                return f'color: {color}; font-weight: bold'
 
-        st.dataframe(
-            util_df.style.format({
-                'Client Rate': '{:.4f}',
-                'Industry Avg': '{:.4f}',
-                'Difference (%)': '{:+.1f}%'
-            }).applymap(style_util, subset=['Difference (%)']),
-            use_container_width=True,
-            hide_index=True
-        )
+            st.dataframe(
+                util_df.style.format({
+                    'Client Rate': '{:.4f}',
+                    'Industry Avg': '{:.4f}',
+                    'Difference (%)': '{:+.1f}%'
+                }).applymap(style_util, subset=['Difference (%)']),
+                use_container_width=True,
+                hide_index=True
+            )
+
+else:
+    # Reset metrics variable if no valid selection is made so section 2 defaults logic works
+    metrics = None 
 
 st.markdown('---')
 
@@ -371,19 +379,23 @@ with p1:
         industries = sorted(INDUSTRY_BENCHMARKS_DF['Business_Industry'].unique())
         # Default to selected client's industry if available
         def_ix = 0
-        if selected_id and metrics and metrics['Industry'] in industries:
+        if metrics and metrics['Industry'] in industries:
              def_ix = industries.index(metrics['Industry'])
+        
+        # Add select here option for projection as well if needed, or default to first/client industry
+        # For projection, defaulting to client industry (if selected above) is usually desired behavior
         proj_ind = st.selectbox("2.1 Select Industry", industries, index=def_ix)
     else:
         proj_ind = None
         st.warning("No industry data available.")
 
 with p2:
-    # Default to selected client's subs if available
-    def_sub = int(metrics['Subscribers']) if selected_id and metrics else 1000
-    proj_sub = st.number_input("2.2 Subscribers", min_value=1, value=def_sub)
+    # Default to selected client's subs if available, else 0
+    def_sub = int(metrics['Subscribers']) if metrics else 0
+    # Updated min_value to 0 as requested
+    proj_sub = st.number_input("2.2 Subscribers", min_value=0, value=def_sub)
 
-if proj_ind and proj_sub and not INDUSTRY_BENCHMARKS_DF.empty:
+if proj_ind and proj_sub > 0 and not INDUSTRY_BENCHMARKS_DF.empty:
     proj_df, total_p = run_projection(proj_sub, proj_ind, INDUSTRY_BENCHMARKS_DF)
     
     c_p_metric, c_p_table = st.columns([1, 2])
@@ -399,14 +411,14 @@ if proj_ind and proj_sub and not INDUSTRY_BENCHMARKS_DF.empty:
 
 # --- Footer ---
 st.markdown('---')
-# Note the doubled curly braces {{ and }} for CSS inside f-string
+# Double curly braces {{ }} used for CSS inside f-string
 st.markdown(f"""
 <div style="text-align:center; color:gray; padding:20px;">
     <h3 style="color:{BRAND_COLOR_BLUE}">Value Proposition</h3>
     <p>Highlights services contributing to ROI: 24/7 Support, Risk Mitigation, Duty of Care.</p>
     <br>
     <a href="https://www.internationalsos.com/get-in-touch?utm_source=benchmarkingreport" target="_blank">
-        <button style="background-color:{BRAND_COLOR_ORANGE}; color:white; border:none; padding:10px 20px; border-radius:5px; cursor:pointer;">
+        <button style="background-color:#EF820F; color:white; border:none; padding:10px 20px; border-radius:5px; cursor:pointer;">
             Get in Touch
         </button>
     </a>
