@@ -63,8 +63,9 @@ def get_client_data(account_id):
     # Filter the raw data for the selected AccountID
     client_row = RAW_DATA_DF[RAW_DATA_DF['AccountID'] == account_id].iloc[0]
     
-    # Convert row to dictionary for easier key access
-    client_data = client_row.to_dict()
+    # --- FINAL FIX: Create a clean dictionary from the client row ---
+    # Convert the row to a dictionary, ensuring all keys (column names) are clean strings
+    client_data = {key.strip(): value for key, value in client_row.items()}
     
     # Get the list of all base columns that need a 'Per Subscriber' rate calculation
     RATE_BASE_COLUMNS = [col.replace(' Per Subscriber', '').strip() 
@@ -72,15 +73,14 @@ def get_client_data(account_id):
     
     subscribers = client_data.get('Subscribers', 0)
     
-    # Calculate client's utilization and case rates per subscriber (FIX APPLIED HERE)
+    # Calculate client's utilization and case rates per subscriber
     for original_col_name in RATE_BASE_COLUMNS:
         rate_col_name = f"{original_col_name} Per Subscriber"
         
         # Check if the raw data column exists and subscribers > 0
-        # We must use client_data.get(key, 0) because the dictionary keys might have inherited subtle formatting
-        # issues or be missing from the dict, even if they exist in the DataFrame.
         raw_value = client_data.get(original_col_name, 0)
         
+        # Ensure the final rate column name is clean (e.g., 'Total Cases Per Subscriber')
         if subscribers > 0 and raw_value != 0:
             client_data[rate_col_name] = raw_value / subscribers
         else:
@@ -102,8 +102,7 @@ def benchmark_client(client_data, industry_benchmark_df):
     
     results = {}
     
-    # 1. Case Load Benchmarking (This reference is now safe as it's generated in get_client_data)
-    # The client_data dictionary is guaranteed to contain this key now.
+    # 1. Case Load Benchmarking (Access is now safe)
     total_cases_rate_client = client_data['Total Cases Per Subscriber']
     total_cases_rate_industry = industry_row['Total Cases Per Subscriber']
     
