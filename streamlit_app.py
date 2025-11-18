@@ -12,7 +12,7 @@ BENCHMARK_COLOR_BAD = "#D4002C"
 # --- Column Mapping (Based on your specific instructions) ---
 # Keys are the CSV headers, Values are internal friendly names
 COLUMN_MAP = {
-    "AccountID": "AccountID",
+    "Account_ID": "AccountID",
     "Business_Industry": "Business_Industry",
     "WFR": "WFR",
     "Subscribers": "Subscribers",
@@ -147,13 +147,13 @@ def calculate_industry_averages(df):
 INDUSTRY_BENCHMARKS_DF = calculate_industry_averages(RAW_DATA_DF)
 
 
-def get_client_metrics(accountid, raw_df, benchmark_df):
+def get_client_metrics(account_id, raw_df, benchmark_df):
     """Retrieves client data and compares it to their industry benchmark."""
     if raw_df.empty:
         return None
         
     # 1. Get Client Row
-    client_row = raw_df[raw_df['AccountID'] == accountid].iloc[0]
+    client_row = raw_df[raw_df['AccountID'] == account_id].iloc[0]
     client_industry = client_row['Business_Industry']
     client_subs = client_row['Subscribers']
     
