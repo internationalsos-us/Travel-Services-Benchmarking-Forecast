@@ -65,6 +65,13 @@ UTIL_COLUMNS = [
     "App_and_Portal_Sessions", "Alerts_Sent_to_Travelers",
     "Pre_Trip_Advisories_Sent", "E_Learning_Completed_Courses"
 ]
+# Defined Case Groups for Analysis (Based on Severity)
+HSC_COLUMNS = [
+    "Medical_Cases_InPatient", "Medical_Cases_Evac", 
+    "Security_Cases_Intervention", "Security_Cases_Evac"
+]
+LSC_COLUMNS = [c for c in CASE_COLUMNS if c not in HSC_COLUMNS]
+
 # --- Data Loading ---
 @st.cache_data
 def load_data():
@@ -90,15 +97,24 @@ def load_data():
         df['Customer_Since'] = pd.to_datetime(df['Customer_Since'], errors='coerce')
         
         # Ensure columns exist and fill NaN with 0
-        for col in CASE_COLUMNS + UTIL_COLUMNS + ['Subscribers']:
+        for col in CASE_COLUMNS + UTIL_COLUMNS + ['Subscribers', 'WFR']:
              if col not in df.columns:
-                 df[col] = 0
-             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+                 df[col] = 0 if col != 'WFR' else 'N/A'
+             if col != 'WFR':
+                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        
         df['Total_Cases_Calculated'] = df[CASE_COLUMNS].sum(axis=1)
+        # Calculate LSC and HSC totals
+        df['Total_HSC_Calculated'] = df[HSC_COLUMNS].sum(axis=1)
+        df['Total_LSC_Calculated'] = df[LSC_COLUMNS].sum(axis=1)
         
         # Pre-calculate rates
         if 'Subscribers' in df.columns:
              df['Cases_Per_Subscriber'] = df.apply(lambda x: x['Total_Cases_Calculated'] / x['Subscribers'] if x['Subscribers'] > 0 else 0, axis=1)
+             # Calculate LSC and HSC rates
+             df['HSC_Per_Subscriber'] = df.apply(lambda x: x['Total_HSC_Calculated'] / x['Subscribers'] if x['Subscribers'] > 0 else 0, axis=1)
+             df['LSC_Per_Subscriber'] = df.apply(lambda x: x['Total_LSC_Calculated'] / x['Subscribers'] if x['Subscribers'] > 0 else 0, axis=1)
+             
              cols_util_sum = [c for c in UTIL_COLUMNS if c in df.columns]
              df['Total_Utilization_Count'] = df[cols_util_sum].sum(axis=1)
              df['Utilization_Per_Subscriber'] = df.apply(lambda x: x['Total_Utilization_Count'] / x['Subscribers'] if x['Subscribers'] > 0 else 0, axis=1)
@@ -131,6 +147,39 @@ def calculate_industry_averages(df):
         benchmarks.append(data)
     return pd.DataFrame(benchmarks)
 INDUSTRY_BENCHMARKS_DF = calculate_industry_averages(RAW_DATA_DF)
+
+@st.cache_data
+def calculate_wfr_benchmarks(df):
+    """
+    Calculates average LSC and HSC rates for WFR1&2 vs. WFR3 groups.
+    """
+    if df.empty or 'WFR' not in df.columns: return None
+    
+    # Filter only WFR clients (1, 2, 3)
+    wfr_df = df[df['WFR'].isin(['WFR1', 'WFR2', 'WFR3'])].copy()
+    if wfr_df.empty: return None
+
+    # Define groups
+    low_tier = wfr_df[wfr_df['WFR'].isin(['WFR1', 'WFR2'])]
+    high_tier = wfr_df[wfr_df['WFR'] == 'WFR3']
+    
+    benchmarks = {}
+    
+    for tier_name, tier_df in [('WFR1&2', low_tier), ('WFR3', high_tier)]:
+        total_sub = tier_df['Subscribers'].sum()
+        if total_sub == 0: continue
+        
+        benchmarks[tier_name] = {
+            'Subscribers': total_sub,
+            'HSC_Rate': tier_df['Total_HSC_Calculated'].sum() / total_sub,
+            'LSC_Rate': tier_df['Total_LSC_Calculated'].sum() / total_sub,
+            'Total_Rate': tier_df['Total_Cases_Calculated'].sum() / total_sub,
+        }
+    
+    return benchmarks
+WFR_BENCHMARKS = calculate_wfr_benchmarks(RAW_DATA_DF)
+
+
 def get_client_metrics(account_id, raw_df, benchmark_df):
     if raw_df.empty: return None
     client_row = raw_df[raw_df['AccountID'] == account_id].iloc[0]
@@ -146,6 +195,7 @@ def get_client_metrics(account_id, raw_df, benchmark_df):
     metrics = {
         'Industry': industry, 'Subscribers': subs, 
         'Customer_Since': client_row['Customer_Since'],
+        'WFR': client_row['WFR'] if 'WFR' in client_row else 'N/A', # Added WFR here
         'Client_Case_Totals': {col: client_row[col] for col in CASE_COLUMNS},
         'Industry_Case_Rates': {col: ind_row[f"{col}_Rate"] for col in CASE_COLUMNS}
     }
@@ -487,9 +537,6 @@ if sel_ind != "All Industries":
     # 2. Summary Box
     st.info(profile["summary"])
 
-    # 10. Remove entirely the section that starts with "Top 3 Case rates in this industry" (Removed logic here)
-    # The 'Top 3 Case Types' section and its related logic/display were removed below this comment.
-
 st.markdown('---')
 # --- SECTION 3: Projection ---
 # 11. Section 3 Title Change
@@ -526,6 +573,113 @@ if p_ind and p_sub > 0 and not INDUSTRY_BENCHMARKS_DF.empty:
             use_container_width=True,
             hide_index=True
         )
+st.markdown('---')
+
+# --- NEW SECTION 4: WFR TIER COMPARISON ---
+st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">4. WFR Tier Case Rate Comparison</h2>', unsafe_allow_html=True)
+if metrics and WFR_BENCHMARKS and metrics.get('WFR') in ['WFR1', 'WFR2', 'WFR3']:
+    current_wfr = metrics.get('WFR', 'N/A')
+    
+    if current_wfr == 'WFR3' and 'WFR1&2' in WFR_BENCHMARKS:
+        current_tier = 'WFR3'
+        comparison_tier = 'WFR1&2'
+    elif current_wfr in ['WFR1', 'WFR2'] and 'WFR3' in WFR_BENCHMARKS:
+        current_tier = 'WFR1&2'
+        comparison_tier = 'WFR3'
+    else:
+        st.info(f"Client **{sel_id}** is on tier **{current_wfr}** but the benchmark data for the comparison tier is unavailable in the dataset.")
+        st.stop()
+        
+    current_rates = WFR_BENCHMARKS[current_tier]
+    comp_rates = WFR_BENCHMARKS[comparison_tier]
+
+    def calculate_rate_change(current_rate, comp_rate):
+        # Percentage change: (New - Old) / Old * 100
+        # If the original rate is zero, percentage change is infinite, so return 0.0.
+        total_change_pct = ((comp_rate['Total_Rate'] - current_rate['Total_Rate']) / current_rate['Total_Rate']) * 100 if current_rate['Total_Rate'] > 0 else 0.0
+        hsc_change_pct = ((comp_rate['HSC_Rate'] - current_rate['HSC_Rate']) / current_rate['HSC_Rate']) * 100 if current_rate['HSC_Rate'] > 0 else 0.0
+        lsc_change_pct = ((comp_rate['LSC_Rate'] - current_rate['LSC_Rate']) / current_rate['LSC_Rate']) * 100 if current_rate['LSC_Rate'] > 0 else 0.0
+        return total_change_pct, hsc_change_pct, lsc_change_pct
+
+    total_change, hsc_change, lsc_change = calculate_rate_change(current_rates, comp_rates)
+
+    # Determine visual colors and text based on the change
+    is_upgrade = current_tier == 'WFR1&2'
+    
+    if is_upgrade:
+        # Client is WFR1&2, comparing to WFR3 (upgrade) - Reduction in HSC is GOOD
+        main_text = f"If client upgraded to the **{comparison_tier}** service level, the benchmark comparison shows:"
+        hsc_label = "High Severity Case Rate Reduction"
+        # Color is GREEN if change is negative (reduction), RED if positive (increase)
+        hsc_color = BENCHMARK_COLOR_GOOD if hsc_change < 0 else BENCHMARK_COLOR_BAD
+        lsc_label = "Low Severity Case Rate Change"
+        lsc_color = BRAND_COLOR_BLUE
+    else:
+        # Client is WFR3, comparing to WFR1&2 (downgrade) - Increase in HSC is BAD
+        main_text = f"If client downgraded to the **{comparison_tier}** service level, the benchmark comparison shows:"
+        hsc_label = "High Severity Case Rate Increase"
+        # Color is RED if change is positive (increase), GREEN if negative (reduction)
+        hsc_color = BENCHMARK_COLOR_BAD if hsc_change > 0 else BENCHMARK_COLOR_GOOD
+        lsc_label = "Low Severity Case Rate Change"
+        lsc_color = BRAND_COLOR_BLUE
+        
+    st.write(f"The selected client (**{current_wfr}**) is compared against the industry average case rates for different WFR tiers. **This analysis excludes non-WFR clients.**")
+    st.markdown(f"### {main_text}")
+
+    # Display the two-point scale/difference visual
+    c1, c2, c3 = st.columns([1, 0.2, 1])
+    
+    with c1:
+        st.markdown(f"""
+        <div style='text-align:center; padding: 20px; border: 2px solid {BRAND_COLOR_BLUE}; border-radius: 8px;'>
+            <p style='font-weight:bold; color:{BRAND_COLOR_DARK}; margin-bottom: 5px;'>Current Tier</p>
+            <h3 style='color:{BRAND_COLOR_BLUE}; margin-top:0;'>{current_tier}</h3>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with c3:
+        st.markdown(f"""
+        <div style='text-align:center; padding: 20px; border: 2px solid {BRAND_COLOR_ORANGE}; border-radius: 8px;'>
+            <p style='font-weight:bold; color:{BRAND_COLOR_DARK}; margin-bottom: 5px;'>Comparison Tier</p>
+            <h3 style='color:{BRAND_COLOR_ORANGE}; margin-top:0;'>{comparison_tier}</h3>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    st.markdown("### Projected Case Rate Impact (Per Subscriber)")
+    
+    col_hsc, col_lsc = st.columns(2)
+    
+    # High Severity Case (HSC) Impact
+    with col_hsc:
+        st.markdown(f"""
+        <div style='background-color:#f0f2f6; padding:20px; border-left: 5px solid {hsc_color}; border-radius: 8px;'>
+            <p style='font-size:16px; font-weight:bold; color:{BRAND_COLOR_DARK}; margin:0;'>{hsc_label}</p>
+            <h1 style='font-size:40px; margin:5px 0; color:{hsc_color}'>{hsc_change:+.1f}%</h1>
+            <p style='font-size:14px; color:gray; margin:0;'>Avg. HSC Rate moves from {current_rates['HSC_Rate']:.4f} to {comp_rates['HSC_Rate']:.4f}</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Low Severity Case (LSC) Impact
+    with col_lsc:
+        # LSC is usually less critical for WFR analysis, so use a neutral color
+        st.markdown(f"""
+        <div style='background-color:#f0f2f6; padding:20px; border-left: 5px solid {lsc_color}; border-radius: 8px;'>
+            <p style='font-size:16px; font-weight:bold; color:{BRAND_COLOR_DARK}; margin:0;'>{lsc_label}</p>
+            <h1 style='font-size:40px; margin:5px 0; color:{lsc_color}'>{lsc_change:+.1f}%</h1>
+            <p style='font-size:14px; color:gray; margin:0;'>Avg. LSC Rate moves from {current_rates['LSC_Rate']:.4f} to {comp_rates['LSC_Rate']:.4f}</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+elif not WFR_BENCHMARKS:
+    st.info("WFR tier benchmarking data could not be calculated. The dataset requires WFR1, WFR2, and WFR3 clients to establish a comparison base.")
+elif not metrics:
+    st.info("Please select a client in Section 1 to view the WFR Tier Comparison.")
+elif metrics.get('WFR') not in ['WFR1', 'WFR2', 'WFR3']:
+    st.info(f"The selected client (**{metrics.get('WFR')}**) is not in a WFR tier eligible for this comparison (WFR1, WFR2, or WFR3).")
+
+
 st.markdown('---')
 
 st.markdown(f"""
