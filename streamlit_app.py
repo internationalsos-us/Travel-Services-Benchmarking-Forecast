@@ -57,7 +57,7 @@ COLUMN_MAP = {
 }
 CASE_COLUMNS = [
     "Travel_Cases", "Medical_Cases_IA", "Medical_Cases_OutPatient",
-    "Medical_Cases_InPatient", "Medical_Cases_Evac", "Security_Cases_IA",
+    "Medical_Cases_In_Patient", "Medical_Cases_Evac", "Security_Cases_IA",
     "Security_Cases_Referrals", "Security_Cases_Intervention",
     "Security_Cases_Evac", "Security_Cases_ActiveMonitoring"
 ]
@@ -67,7 +67,7 @@ UTIL_COLUMNS = [
 ]
 # Defined Case Groups for Analysis (Based on Severity)
 HSC_COLUMNS = [
-    "Medical_Cases_InPatient", "Medical_Cases_Evac", 
+    "Medical_Cases_In_Patient", "Medical_Cases_Evac", 
     "Security_Cases_Intervention", "Security_Cases_Evac"
 ]
 LSC_COLUMNS = [c for c in CASE_COLUMNS if c not in HSC_COLUMNS]
@@ -607,10 +607,14 @@ if metrics and WFR_BENCHMARKS and metrics.get('WFR') in ['WFR1', 'WFR2', 'WFR3']
         """
         Calculates % change using client's actual rate as the original value.
         Change = (Benchmark_New - Client_Actual) / Client_Actual * 100
+        Handles zero division by returning 0.0.
         """
         if client_rate <= 0:
-             # If client has 0 cases, comparison is non-calculable, show 0 or infinity risk if comp_bench_rate > 0
-             return 0.0 # Return 0.0 for display simplicity, though risk is technically infinite if upgrading.
+             # If client has 0 cases, comparison is non-calculable. 
+             # Return 0.0, or a large number if the benchmark rate is non-zero (showing high risk/opportunity).
+             if comp_bench_rate > 0:
+                 return 1000.0 # Effectively representing an enormous potential shift
+             return 0.0 
         
         return ((comp_bench_rate - client_rate) / client_rate) * 100
 
@@ -618,28 +622,46 @@ if metrics and WFR_BENCHMARKS and metrics.get('WFR') in ['WFR1', 'WFR2', 'WFR3']
     hsc_change = calculate_personalized_rate_change(client_hsc_rate, comp_rates['HSC_Rate'])
     lsc_change = calculate_personalized_rate_change(client_lsc_rate, comp_rates['LSC_Rate'])
 
-    # Determine visual colors and text based on the change
+    # Determine visual colors and text based on the change and narrative (risk vs benefit)
     is_upgrade = current_tier == 'WFR1&2'
+    outlier_warning = False
     
     if is_upgrade:
-        # Client is WFR1&2, comparing to WFR3 (upgrade)
+        # Client is WFR1&2, comparing to WFR3 (upgrade scenario = look for reduction/negative change)
         main_text = f"If client upgraded to the **{comparison_tier}** service level, the benchmark comparison projects:"
         hsc_label = "High Severity Case Rate Reduction Potential"
-        # Reduction (negative change) is GOOD (GREEN)
-        hsc_color = BENCHMARK_COLOR_GOOD if hsc_change < 0 else BRAND_COLOR_ORANGE
-        lsc_label = "Low Severity Case Rate Change Potential"
-        lsc_color = BRAND_COLOR_BLUE
-    else:
-        # Client is WFR3, comparing to WFR1&2 (downgrade)
-        main_text = f"If client downgraded to the **{comparison_tier}** service level, the benchmark comparison projects:"
-        hsc_label = "High Severity Case Rate Increase Risk"
-        # Increase (positive change) is BAD (RED)
-        hsc_color = BENCHMARK_COLOR_BAD if hsc_change > 0 else BRAND_COLOR_BLUE
-        lsc_label = "Low Severity Case Rate Change Risk"
-        lsc_color = BRAND_COLOR_BLUE
         
+        if hsc_change < 0:
+             # Client's rate is higher than the WFR3 benchmark, so upgrading offers a projected reduction (GOOD)
+             hsc_color = BENCHMARK_COLOR_GOOD
+        else:
+             # Client's rate is already equal to or better than the WFR3 benchmark (reduction is minimal/negative, but upgrade still secures higher services).
+             # We use orange to indicate low benefit based purely on rate reduction, but not necessarily 'BAD'.
+             hsc_color = BRAND_COLOR_ORANGE 
+             hsc_label = "HSC Rate is already near/better than WFR3 Benchmark"
+             
+    else:
+        # Client is WFR3, comparing to WFR1&2 (downgrade scenario = look for increase/positive change)
+        main_text = f"If client downgraded to the **{comparison_tier}** service level, the benchmark comparison projects:"
+        
+        if hsc_change > 0:
+            # Client's rate is better than WFR1&2 benchmark, so downgrading shows a projected increase (RISK/BAD)
+            hsc_label = "High Severity Case Rate Increase Risk"
+            hsc_color = BENCHMARK_COLOR_BAD
+            
+        else: 
+            # Client's rate is already equal to or worse than the WFR1&2 benchmark.
+            # This indicates the client is already an outlier for their WFR3 tier (BAD/RISK)
+            hsc_label = "High Severity Case Rate Exposure Risk (Current Outlier Status)"
+            hsc_color = BENCHMARK_COLOR_BAD
+            outlier_warning = True
+            
     st.write(f"The selected client (**{current_wfr}**) is compared against the industry average case rates for the comparison WFR tier. **The calculation uses the client's actual case rates as the baseline.**")
     st.markdown(f"### {main_text}")
+
+    # Display Outlier Warning if necessary
+    if outlier_warning:
+        st.warning(f"**Warning:** The client's current actual HSC rate ({client_hsc_rate:.4f}) is already equal to or worse than the benchmark rate of the lower tier ({comp_rates['HSC_Rate']:.4f}). This indicates the client is currently an outlier and faces extreme risk if coverage is reduced.")
 
     # Display the two-point scale/difference visual
     c1, c2, c3 = st.columns([1, 0.2, 1])
@@ -668,10 +690,13 @@ if metrics and WFR_BENCHMARKS and metrics.get('WFR') in ['WFR1', 'WFR2', 'WFR3']
     
     # High Severity Case (HSC) Impact
     with col_hsc:
+        display_hsc_change = f"{hsc_change:+.1f}%" if hsc_change < 1000 else "Extreme Risk"
+        if hsc_change >= 1000: hsc_color = BENCHMARK_COLOR_BAD # Ensure color is red if initial rate was zero
+        
         st.markdown(f"""
         <div style='background-color:#f0f2f6; padding:20px; border-left: 5px solid {hsc_color}; border-radius: 8px;'>
             <p style='font-size:16px; font-weight:bold; color:{BRAND_COLOR_DARK}; margin:0;'>{hsc_label}</p>
-            <h1 style='font-size:40px; margin:5px 0; color:{hsc_color}'>{hsc_change:+.1f}%</h1>
+            <h1 style='font-size:40px; margin:5px 0; color:{hsc_color}'>{display_hsc_change}</h1>
             <p style='font-size:14px; color:gray; margin:0;'>
                 Baseline HSC Rate: {client_hsc_rate:.4f}<br>
                 Comparison Benchmark: {comp_rates['HSC_Rate']:.4f}
@@ -681,11 +706,13 @@ if metrics and WFR_BENCHMARKS and metrics.get('WFR') in ['WFR1', 'WFR2', 'WFR3']
     
     # Low Severity Case (LSC) Impact
     with col_lsc:
-        # LSC is usually less critical for WFR analysis, so use a neutral color
+        # LSC uses the neutral BRAND_COLOR_BLUE
+        display_lsc_change = f"{lsc_change:+.1f}%" if lsc_change < 1000 else "Extreme Shift"
+        
         st.markdown(f"""
         <div style='background-color:#f0f2f6; padding:20px; border-left: 5px solid {lsc_color}; border-radius: 8px;'>
             <p style='font-size:16px; font-weight:bold; color:{BRAND_COLOR_DARK}; margin:0;'>{lsc_label}</p>
-            <h1 style='font-size:40px; margin:5px 0; color:{lsc_color}'>{lsc_change:+.1f}%</h1>
+            <h1 style='font-size:40px; margin:5px 0; color:{lsc_color}'>{display_lsc_change}</h1>
             <p style='font-size:14px; color:gray; margin:0;'>
                 Baseline LSC Rate: {client_lsc_rate:.4f}<br>
                 Comparison Benchmark: {comp_rates['LSC_Rate']:.4f}
