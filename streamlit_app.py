@@ -662,6 +662,11 @@ if metrics and WFR_BENCHMARKS and metrics.get('WFR') in ['WFR1', 'WFR2', 'WFR3']
     is_upgrade = current_tier == 'WFR1&2'
     outlier_warning = False
     
+    # --- START FIX: Initialize LSC variables and then apply logic ---
+    lsc_label = "Low Severity Case Rate Change"
+    lsc_color = BRAND_COLOR_BLUE 
+    # --- END FIX ---
+    
     if is_upgrade:
         # Client is WFR1&2, comparing to WFR3 (upgrade scenario = look for reduction/negative change)
         main_text = f"If client upgraded to the **{comparison_tier}** service level, the benchmark comparison projects:"
@@ -691,7 +696,12 @@ if metrics and WFR_BENCHMARKS and metrics.get('WFR') in ['WFR1', 'WFR2', 'WFR3']
             hsc_label = "High Severity Case Rate Exposure Risk (Current Outlier Status)"
             hsc_color = BENCHMARK_COLOR_BAD
             outlier_warning = True
-            
+    
+    # --- Apply LSC specific logic based on Outlier Warning ---
+    if outlier_warning:
+        # If the client is a severe outlier, highlight LSC risk too, even if it's less critical.
+        lsc_color = BENCHMARK_COLOR_BAD
+    
     st.write(f"The selected client (**{current_wfr}**) is compared against the industry average case rates for the comparison WFR tier. **The calculation uses the client's actual case rates as the baseline.**")
     st.markdown(f"### {main_text}")
 
@@ -742,7 +752,6 @@ if metrics and WFR_BENCHMARKS and metrics.get('WFR') in ['WFR1', 'WFR2', 'WFR3']
     
     # Low Severity Case (LSC) Impact
     with col_lsc:
-        # LSC uses the neutral BRAND_COLOR_BLUE
         display_lsc_change = f"{lsc_change:+.1f}%" if lsc_change < 1000 else "Extreme Shift"
         
         st.markdown(f"""
