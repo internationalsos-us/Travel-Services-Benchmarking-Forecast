@@ -81,37 +81,66 @@ def load_data():
         df.columns = df.columns.str.strip()
         
         rename_dict = {}
+        # 1. Build the rename dictionary based on exact or fuzzy match
         for req_col, internal in COLUMN_MAP.items():
+            found = False
             if req_col in df.columns:
                 rename_dict[req_col] = internal
+                found = True
             else:
                 # Fallback fuzzy match
                 for col in df.columns:
                     # Simplified fuzzy match for robustness
                     if col.lower().replace(' ','').replace('_','') == req_col.lower().replace(' ','').replace('_',''):
                         rename_dict[col] = internal
+                        found = True
                         break
-        
+            # Add a warning if a crucial column was missed during mapping, although the fix below handles this.
+            # if not found and internal in ['AccountID', 'Subscribers']:
+            #     st.warning(f"Could not find critical column: {req_col} (Internal: {internal})")
+
+        # 2. Apply Renaming
         df = df.rename(columns=rename_dict)
-        df['AccountID'] = df['AccountID'].astype(str)
-        df['Customer_Since'] = pd.to_datetime(df['Customer_Since'], errors='coerce')
         
-        # Ensure columns exist and fill NaN with 0
-        for col in CASE_COLUMNS + UTIL_COLUMNS + ['Subscribers', 'WFR']:
-             if col not in df.columns:
-                 df[col] = 0 if col != 'WFR' else 'N/A'
-             if col != 'WFR':
+        # 3. Ensure all required columns exist and handle data types (THE FIX)
+        
+        REQUIRED_COLS = {
+            'AccountID': str,
+            'Subscribers': float,
+            'WFR': str,
+            'Customer_Since': pd.to_datetime,
+        }
+        
+        # List all columns we need for cases and utilization
+        TARGET_COLS = CASE_COLUMNS + UTIL_COLUMNS
+        
+        for col in REQUIRED_COLS:
+            if col not in df.columns:
+                df[col] = np.nan if col != 'WFR' else 'N/A'
+            
+            if col == 'Customer_Since':
+                 df[col] = REQUIRED_COLS[col](df[col], errors='coerce')
+            elif col != 'WFR' and col != 'AccountID':
+                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+                 
+        df['AccountID'] = df['AccountID'].astype(str)
+
+        for col in TARGET_COLS:
+            if col not in df.columns:
+                # Crucially, initialize missing target columns with 0
+                df[col] = 0
+            else:
+                 # Ensure existing target columns are numeric and fill NaNs
                  df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         
+        # 4. Final Calculations (These depend on all columns existing)
         df['Total_Cases_Calculated'] = df[CASE_COLUMNS].sum(axis=1)
-        # Calculate LSC and HSC totals
         df['Total_HSC_Calculated'] = df[HSC_COLUMNS].sum(axis=1)
         df['Total_LSC_Calculated'] = df[LSC_COLUMNS].sum(axis=1)
         
         # Pre-calculate rates
         if 'Subscribers' in df.columns:
              df['Cases_Per_Subscriber'] = df.apply(lambda x: x['Total_Cases_Calculated'] / x['Subscribers'] if x['Subscribers'] > 0 else 0, axis=1)
-             # Calculate LSC and HSC rates
              df['HSC_Per_Subscriber'] = df.apply(lambda x: x['Total_HSC_Calculated'] / x['Subscribers'] if x['Subscribers'] > 0 else 0, axis=1)
              df['LSC_Per_Subscriber'] = df.apply(lambda x: x['Total_LSC_Calculated'] / x['Subscribers'] if x['Subscribers'] > 0 else 0, axis=1)
              
@@ -182,7 +211,13 @@ WFR_BENCHMARKS = calculate_wfr_benchmarks(RAW_DATA_DF)
 
 def get_client_metrics(account_id, raw_df, benchmark_df):
     if raw_df.empty: return None
-    client_row = raw_df[raw_df['AccountID'] == account_id].iloc[0]
+    # Ensure client_row is successfully located
+    try:
+        client_row = raw_df[raw_df['AccountID'] == account_id].iloc[0]
+    except IndexError:
+        st.error(f"Account ID '{account_id}' not found in the data after filtering.")
+        return None
+
     industry = client_row['Business_Industry']
     subs = client_row['Subscribers']
     
@@ -196,6 +231,7 @@ def get_client_metrics(account_id, raw_df, benchmark_df):
         'Industry': industry, 'Subscribers': subs, 
         'Customer_Since': client_row['Customer_Since'],
         'WFR': client_row['WFR'] if 'WFR' in client_row else 'N/A', # Added WFR here
+        # This dictionary comprehension now safely uses the final, guaranteed column names
         'Client_Case_Totals': {col: client_row[col] for col in CASE_COLUMNS},
         'Industry_Case_Rates': {col: ind_row[f"{col}_Rate"] for col in CASE_COLUMNS}
     }
