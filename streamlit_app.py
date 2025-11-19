@@ -229,11 +229,14 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 st.write("")
-st.markdown(f'<h1 style="color:{BRAND_COLOR_DARK};">Assistance Activity and ROI Benchmark</h1>', unsafe_allow_html=True)
+# 1. Title Change
+st.markdown(f'<h1 style="color:{BRAND_COLOR_DARK};">Assistance Services Benchmarking Report</h1>', unsafe_allow_html=True)
 st.write("Compare client assistance activity against industry peers.")
 st.markdown('---')
 # Section 1
-st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">1. Account Benchmarking & Utilization Analysis</h2>', unsafe_allow_html=True)
+# 2. Section 1 Title Change + Subtitle
+st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">1. Existing Client Utilization and Benchmarking Analysis</h2>', unsafe_allow_html=True)
+st.markdown("**(Actual activity for a 12-month period)**") # Subtitle added here
 if RAW_DATA_DF.empty: st.stop()
 # Ensure IDs are sorted for easy typing/searching
 ids = sorted(RAW_DATA_DF['AccountID'].unique())
@@ -318,7 +321,8 @@ if sel_id != "Select here...":
                     styles = ['font-weight: bold; background-color: #e6e6e6;'] * len(row) 
                     return styles if is_total else [''] * len(row)
                 
-                st.subheader("Client Case Breakdown")
+                # 3. Client Case Breakdown Title Change
+                st.subheader("Actual Client Cases by Type")
                 st.dataframe(
                     bd_df_final.style.apply(style_total_row, axis=1),
                     use_container_width=True,
@@ -329,7 +333,8 @@ if sel_id != "Select here...":
         
         # --- CHART: Case Rate Comparison ---
         st.write("")
-        st.subheader("Client vs. Industry: Case Rate Comparison")
+        # 4. Case Rate Comparison Title Change
+        st.subheader("Case Rate Frequency compared to Industry Average")
         
         chart_data = []
         subs = metrics['Subscribers']
@@ -361,7 +366,8 @@ if sel_id != "Select here...":
             else:
                 st.info("No significant data.")
         st.write("")
-        st.markdown(f'<h3 style="color:{BRAND_COLOR_DARK};">Utilization Analysis</h3>', unsafe_allow_html=True)
+        # 5. Utilization Analysis Title Change
+        st.markdown(f'<h3 style="color:{BRAND_COLOR_DARK};">Digital Utilization by Type</h3>', unsafe_allow_html=True)
         if 'Util_Comparison' in metrics:
             udf = metrics['Util_Comparison']
             
@@ -385,8 +391,10 @@ if sel_id != "Select here...":
             )
 st.markdown('---')
 # --- SECTION 2: CORRELATION GRAPH ---
-st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">2. Correlation: Utilization vs. Case Load</h2>', unsafe_allow_html=True)
-st.write("Comparing **Total Utilization** against **Total Case Load**. Outliers (top 5%) are removed.")
+# 6. Correlation Section Title Change
+st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">2. Digital and Case Utilization Benchmarking</h2>', unsafe_allow_html=True)
+# 7. Correlation Subtext Change
+st.write("Compare digital utilization (alerts, app + portal use, eLearning, etc) against Assistance case utilization, by subscriber population. Outliers (top 5%) have been removed")
 inds = sorted(RAW_DATA_DF['Business_Industry'].dropna().unique().tolist())
 # Initialize sel_ind globally
 sel_ind = "All Industries"
@@ -419,6 +427,10 @@ else:
     plot_df_filtered['Client_Type'] = 'All Clients'
     cmap = {'All Clients': BRAND_COLOR_BLUE}
 
+# 8. X-Axis Label Change & 9. Y-Axis Label Change
+X_AXIS_LABEL = "Digital Utilization/Subscriber"
+Y_AXIS_LABEL = "Case Utilization/Subscriber"
+
 if not plot_df_filtered.empty:
     # Calculate trendline data and draw it if a specific industry is selected
     if len(plot_df) >= 2 and sel_ind != "All Industries":
@@ -439,7 +451,7 @@ if not plot_df_filtered.empty:
             plot_df_filtered, x="Utilization_Per_Subscriber", y="Cases_Per_Subscriber",
             color="Client_Type", color_discrete_map=cmap,
             hover_data=["AccountID", "Business_Industry", "Subscribers"],
-            labels={"Utilization_Per_Subscriber": "Total Utilization/Subscriber", "Cases_Per_Subscriber": "Total Cases/Subscriber"},
+            labels={"Utilization_Per_Subscriber": X_AXIS_LABEL, "Cases_Per_Subscriber": Y_AXIS_LABEL},
             height=500
         )
         
@@ -453,7 +465,7 @@ if not plot_df_filtered.empty:
             plot_df_filtered, x="Utilization_Per_Subscriber", y="Cases_Per_Subscriber",
             color="Client_Type", color_discrete_map=cmap,
             hover_data=["AccountID", "Business_Industry", "Subscribers"],
-            labels={"Utilization_Per_Subscriber": "Total Utilization/Subscriber", "Cases_Per_Subscriber": "Total Cases/Subscriber"},
+            labels={"Utilization_Per_Subscriber": X_AXIS_LABEL, "Cases_Per_Subscriber": Y_AXIS_LABEL},
             height=500
         )
         
@@ -475,50 +487,13 @@ if sel_ind != "All Industries":
     # 2. Summary Box
     st.info(profile["summary"])
 
-    # 3. Top 3 Case Types
-    # Ensure the industry exists in the benchmarks before proceeding
-    bench_row_match = INDUSTRY_BENCHMARKS_DF[INDUSTRY_BENCHMARKS_DF['Business_Industry'] == sel_ind]
-    
-    if not bench_row_match.empty:
-        bench_row = bench_row_match.iloc[0]
-        
-        # Extract case rates
-        case_rates = {}
-        for col in CASE_COLUMNS:
-            friendly_name = col.replace('Medical_Cases_', 'Med - ').replace('Security_Cases_', 'Sec - ').replace('_', ' ')
-            case_rates[friendly_name] = bench_row[f"{col}_Rate"]
-            
-        case_rates_df = pd.Series(case_rates).sort_values(ascending=False)
-        top_3_rates = case_rates_df.head(3)
-        
-        st.subheader("Top 3 Case Rates in this Industry (per Subscriber)")
-        
-        # Display using columns for a clean look
-        c_list = st.columns(3)
-        for i, (case_type, rate) in enumerate(top_3_rates.items()):
-            if rate > 0:
-                with c_list[i]:
-                    st.markdown(f"""
-                    <div style="background-color:#f0f2f6; padding:15px; border-radius:8px; height: 100%;">
-                        <p style="font-size:14px; color:{BRAND_COLOR_DARK}; margin:0; font-weight: bold;">
-                            {case_type}
-                        </p>
-                        <h3 style="color:{BRAND_COLOR_BLUE}; margin:5px 0 0;">
-                            {rate:.4f}
-                        </h3>
-                    </div>
-                    """, unsafe_allow_html=True)
-            else:
-                 # Ensure a column is still created but remains empty if less than 3 non-zero rates
-                 if i < 3: 
-                    with c_list[i]:
-                        st.empty() 
-    else:
-        st.info("Industry benchmark data not available for the selected industry.")
+    # 10. Remove entirely the section that starts with "Top 3 Case rates in this industry" (Removed logic here)
+    # The 'Top 3 Case Types' section and its related logic/display were removed below this comment.
 
 st.markdown('---')
 # --- SECTION 3: Projection ---
-st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">3. Case Projection Model</h2>', unsafe_allow_html=True)
+# 11. Section 3 Title Change
+st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">3. New Client or Annual Cases Forecast</h2>', unsafe_allow_html=True)
 c1, c2 = st.columns(2)
 with c1:
     # Default to the industry selected in the chart if one is selected
