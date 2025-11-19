@@ -10,6 +10,26 @@ BRAND_COLOR_DARK = "#232762"
 BENCHMARK_COLOR_GOOD = "#009354"
 BENCHMARK_COLOR_BAD = "#D4002C"
 BRAND_COLOR_ORANGE = "#EF820F"
+# --- Hardcoded Industry Risk Profiles for Section 2 ---
+INDUSTRY_RISK_PROFILES = {
+    "Technology": {
+        "summary": "High volume, low-risk travel. Focus is typically on general medical assistance, minimizing travel disruption, and ensuring high utilization of digital resources like the App/Portal for pre-trip planning.",
+        "icon": "📱"
+    },
+    "Energy & Mining": {
+        "summary": "High-risk, remote deployments. Case severity is often high, with a focus on Medical Evacuation (high cost/low frequency) and robust security services (e.g., Security Intervention and Active Monitoring).",
+        "icon": "⛏️"
+    },
+    "Financial Services": {
+        "summary": "High-frequency business travel in established locations. Key risks involve security concerns in politically unstable regions and high-value personnel needing rapid, discreet support.",
+        "icon": "🏦"
+    },
+    "Manufacturing": {
+        "summary": "Mixed risk profile, with global supply chains. Cases often center on general travel illness and low-level security incidents (e.g., Referrals and Information & Analysis).",
+        "icon": "⚙️"
+    },
+    # Add more industries as needed based on your data
+}
 # --- Column Mapping ---
 COLUMN_MAP = {
     "Account_ID": "AccountID",
@@ -173,7 +193,7 @@ def run_projection(subs, industry, bench_df):
 def get_impact_factor(df_industry):
     """
     Performs linear regression (Cases/Sub ~ Utilization/Sub) and returns the slope (m) and intercept (c).
-    This function is kept but no longer used in the main flow, as per user request to remove Section 4.
+    This function is kept but no longer used in the main flow.
     """
     if df_industry.empty or len(df_industry) < 2:
         return 0.0, 0.0 # slope, intercept
@@ -256,20 +276,47 @@ if sel_id != "Select here...":
         
         with cc2:
             bd_data = []
+            total_cases = 0
             if 'Client_Case_Totals' in metrics:
                 for k, v in metrics['Client_Case_Totals'].items():
+                    # Populate data for the breakdown table
                     bd_data.append({'Case Type': k.replace('Medical_Cases_', 'Med - ').replace('Security_Cases_', 'Sec - ').replace('_', ' '), 'Cases': v})
-            bd_df = pd.DataFrame(bd_data)
-            bd_df = bd_df[bd_df['Cases'] > 0]
+                    total_cases += v
             
-            if not bd_df.empty:
-                tot = bd_df['Cases'].sum()
-                # Format as string directly to avoid syntax errors in column_config
-                bd_df['% of Total'] = (bd_df['Cases'] / tot * 100).map('{:.1f}%'.format)
+            bd_df = pd.DataFrame(bd_data)
+            
+            # Filter to show only cases > 0
+            bd_df_filtered = bd_df[bd_df['Cases'] > 0].copy() 
+            
+            if not bd_df_filtered.empty or total_cases > 0:
+                tot = total_cases
+                
+                # Format % of Total based on the grand total
+                if tot > 0:
+                    bd_df_filtered['% of Total'] = (bd_df_filtered['Cases'] / tot * 100).map('{:.1f}%'.format)
+                else:
+                    bd_df_filtered['% of Total'] = '0.0%'
+                    
+                # Add Total Row
+                total_row = pd.DataFrame([{
+                    'Case Type': 'Total Cases', 
+                    'Cases': tot, 
+                    '% of Total': '100.0%' if tot > 0 else '0.0%'
+                }])
+                
+                # Concatenate the total row to the filtered breakdown data
+                bd_df_final = pd.concat([bd_df_filtered, total_row], ignore_index=True)
+                
+                # Styling function to bold the last row (Total Cases)
+                def style_total_row(row):
+                    is_total = row['Case Type'] == 'Total Cases'
+                    # Apply a lighter background to the total row
+                    styles = ['font-weight: bold; background-color: #e6e6e6;'] * len(row) 
+                    return styles if is_total else [''] * len(row)
                 
                 st.subheader("Client Case Breakdown")
                 st.dataframe(
-                    bd_df,
+                    bd_df_final.style.apply(style_total_row, axis=1),
                     use_container_width=True,
                     hide_index=True
                 )
@@ -411,6 +458,48 @@ if not plot_df_filtered.empty:
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("No data available.")
+
+# --- Dynamic Industry Profile (New Element in Section 2) ---
+if sel_ind != "All Industries" and sel_ind in INDUSTRY_RISK_PROFILES:
+    st.markdown(f'<h3 style="color:{BRAND_COLOR_DARK}; margin-top: 30px;">{INDUSTRY_RISK_PROFILES[sel_ind]["icon"]} {sel_ind} Industry Risk Profile</h3>', unsafe_allow_html=True)
+    
+    # 1. Summary Box
+    st.info(INDUSTRY_RISK_PROFILES[sel_ind]["summary"])
+
+    # 2. Top 3 Case Types
+    bench_row = INDUSTRY_BENCHMARKS_DF[INDUSTRY_BENCHMARKS_DF['Business_Industry'] == sel_ind].iloc[0]
+    
+    # Extract case rates
+    case_rates = {}
+    for col in CASE_COLUMNS:
+        friendly_name = col.replace('Medical_Cases_', 'Med - ').replace('Security_Cases_', 'Sec - ').replace('_', ' ')
+        case_rates[friendly_name] = bench_row[f"{col}_Rate"]
+        
+    case_rates_df = pd.Series(case_rates).sort_values(ascending=False)
+    top_3_rates = case_rates_df.head(3)
+    
+    st.subheader("Top 3 Case Rates in this Industry (per Subscriber)")
+    
+    # Display using columns for a clean look
+    c_list = st.columns(3)
+    for i, (case_type, rate) in enumerate(top_3_rates.items()):
+        if rate > 0:
+            with c_list[i]:
+                st.markdown(f"""
+                <div style="background-color:#f0f2f6; padding:15px; border-radius:8px; height: 100%;">
+                    <p style="font-size:14px; color:{BRAND_COLOR_DARK}; margin:0; font-weight: bold;">
+                        {case_type}
+                    </p>
+                    <h3 style="color:{BRAND_COLOR_BLUE}; margin:5px 0 0;">
+                        {rate:.4f}
+                    </h3>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+             # Ensure a column is still created but remains empty if less than 3 non-zero rates
+             if i < 3: 
+                with c_list[i]:
+                    st.empty() 
 st.markdown('---')
 # --- SECTION 3: Projection ---
 st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">3. Case Projection Model</h2>', unsafe_allow_html=True)
