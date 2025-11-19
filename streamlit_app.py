@@ -100,7 +100,7 @@ def calculate_industry_averages(df):
         
         data['Total_Cases_Rate'] = group['Total_Cases_Calculated'].sum() / total_sub
         
-        # Add industry average of Utilization_Per_Subscriber for Section 4
+        # Add industry average of Utilization_Per_Subscriber for downstream use
         util_rate_col = [c for c in group.columns if c == 'Utilization_Per_Subscriber']
         if util_rate_col:
             data['Utilization_Per_Subscriber'] = group['Total_Utilization_Count'].sum() / total_sub
@@ -126,7 +126,7 @@ def get_client_metrics(account_id, raw_df, benchmark_df):
         'Industry_Case_Rates': {col: ind_row[f"{col}_Rate"] for col in CASE_COLUMNS}
     }
     
-    util_data = [] # Store utilization raw rates and differences for Section 4 (new)
+    util_data = [] 
     
     if subs > 0:
         c_rate = client_row['Total_Cases_Calculated'] / subs
@@ -143,7 +143,7 @@ def get_client_metrics(account_id, raw_df, benchmark_df):
                 'Metric': col.replace('_',' '), 'Client Rate': u_rate, 
                 'Industry Avg': ui_rate, 'Difference': diff 
             })
-            # Store raw data for Section 4 calculations
+            # Store raw data for any future correlation needs
             util_data.append({
                 'Metric': col, 
                 'Client_Rate': u_rate, 
@@ -151,7 +151,7 @@ def get_client_metrics(account_id, raw_df, benchmark_df):
             })
             
         metrics['Util_Comparison'] = pd.DataFrame(util_comp)
-        metrics['Raw_Util_Rates'] = pd.DataFrame(util_data) # New data frame for Section 4
+        metrics['Raw_Util_Rates'] = pd.DataFrame(util_data)
     return metrics
 def run_projection(subs, industry, bench_df):
     if bench_df.empty: return pd.DataFrame(), 0
@@ -173,7 +173,7 @@ def run_projection(subs, industry, bench_df):
 def get_impact_factor(df_industry):
     """
     Performs linear regression (Cases/Sub ~ Utilization/Sub) and returns the slope (m) and intercept (c).
-    The slope (m) is the Impact Factor.
+    This function is kept but no longer used in the main flow, as per user request to remove Section 4.
     """
     if df_industry.empty or len(df_industry) < 2:
         return 0.0, 0.0 # slope, intercept
@@ -191,55 +191,6 @@ def get_impact_factor(df_industry):
     # Perform linear regression: Y = mX + c
     m, c = np.polyfit(X, Y, 1)
     return m, c
-
-def calculate_opportunity_score(client_raw_util_df, subs, impact_slope):
-    """
-    Calculates the potential case reduction if the client closes the utilization gap 
-    (where client rate < industry rate) for each utilization metric.
-    """
-    if client_raw_util_df is None or impact_slope >= 0:
-        # If no data or if utilization increase does not reduce cases, return empty
-        return pd.DataFrame() 
-
-    opportunities = []
-    
-    # Iterate through each utilization metric
-    for _, row in client_raw_util_df.iterrows():
-        metric = row['Metric']
-        client_rate = row['Client_Rate']
-        industry_rate = row['Industry_Rate']
-        
-        # Only consider opportunities where the client is *below* the industry average
-        if client_rate < industry_rate:
-            # 1. Calculate the gap (the utilization rate increase needed)
-            util_gap = industry_rate - client_rate
-            
-            # 2. Calculate the projected change in total case rate
-            # Change in Y (Case Rate) = Slope (m) * Change in X (Total Utilization Rate)
-            # We assume a 1-unit increase in *this* specific utilization metric 
-            # contributes 1-unit to the *total* utilization for simplicity in scoring.
-            case_rate_reduction = util_gap * impact_slope
-            
-            # 3. Calculate the total cases avoided annually
-            cases_avoided = abs(case_rate_reduction) * subs
-            
-            opportunities.append({
-                'Metric': metric.replace('_',' '),
-                'Current Client Rate': client_rate,
-                'Industry Avg Rate': industry_rate,
-                'Utilization Gap': util_gap,
-                'Annual Cases Avoided': cases_avoided,
-            })
-            
-    df = pd.DataFrame(opportunities)
-    if not df.empty:
-        df = df.sort_values(by='Annual Cases Avoided', ascending=False)
-        # Calculate a simple score based on rank and cases avoided (for presentation)
-        # Using Cases Avoided as the primary score
-        df['Opportunity Score'] = df['Annual Cases Avoided'].round(1) 
-        df = df.rename(columns={'Annual Cases Avoided': 'Projected Case Reduction'})
-        df = df[['Metric', 'Current Client Rate', 'Industry Avg Rate', 'Projected Case Reduction', 'Opportunity Score']]
-    return df
 
 def get_diff_color(val, invert=False):
     # val is percentage (e.g. 10.0 for 10%)
@@ -279,8 +230,8 @@ if sel_id != "Select here...":
     metrics = get_client_metrics(sel_id, RAW_DATA_DF, INDUSTRY_BENCHMARKS_DF)
     if metrics:
         c1, c2, c3 = st.columns(3)
-        st.session_state.current_industry = metrics['Industry'] # Store for Section 4 use
-        st.session_state.current_subs = metrics['Subscribers'] # Store for Section 4 use
+        st.session_state.current_industry = metrics['Industry'] 
+        st.session_state.current_subs = metrics['Subscribers'] 
         
         c1.text_input("1.2 Business Industry", value=metrics['Industry'], disabled=True)
         c2.text_input("1.3 Number of Subscribers", value=f"{metrics['Subscribers']:,}", disabled=True)
@@ -495,66 +446,6 @@ if p_ind and p_sub > 0 and not INDUSTRY_BENCHMARKS_DF.empty:
             use_container_width=True,
             hide_index=True
         )
-st.markdown('---')
-
-# --- SECTION 4: Action Opportunity and Prioritization ---
-st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">4. Action Opportunity and Prioritization</h2>', unsafe_allow_html=True)
-
-# Check if a client is selected
-if sel_id == "Select here...":
-    st.info("Please select an **Account ID** in Section 1 to view actionable opportunities.")
-elif not metrics:
-    st.error("Client metrics are unavailable.")
-else:
-    # 1. Get current client data and industry context
-    client_subs = st.session_state.get('current_subs', 0)
-    client_industry = st.session_state.get('current_industry', None)
-    raw_util_rates = metrics.get('Raw_Util_Rates')
-
-    if client_industry and client_subs > 0 and raw_util_rates is not None:
-        # 2. Recalculate the impact slope based on the *client's industry*
-        scenario_df = RAW_DATA_DF[RAW_DATA_DF['Subscribers'] > 0].copy()
-        scenario_df = scenario_df[scenario_df['Business_Industry'] == client_industry]
-        impact_slope, _ = get_impact_factor(scenario_df)
-
-        if impact_slope >= 0:
-            st.warning(f"The calculated Impact Factor (m={impact_slope:+.4f}) for the {client_industry} industry is non-negative. This means increasing utilization, based on current data, is not correlated with a decrease in case load. No prioritization analysis can be performed.")
-        else:
-            # 3. Calculate the opportunity table
-            opportunity_df = calculate_opportunity_score(raw_util_rates, client_subs, impact_slope)
-
-            if opportunity_df.empty:
-                st.success("The client's utilization rates are currently above or equal to the industry average for all metrics! Great performance!")
-            else:
-                st.markdown(f"""
-                <p>
-                    The table below highlights specific utilization metrics where the client is <strong>below</strong> the {client_industry} industry average. The <strong>Projected Case Reduction</strong> estimates the annual cases avoided if the client achieves the industry average rate for that specific metric, calculated using the industry's Impact Factor ($m={impact_slope:+.4f}$).
-                </p>
-                """, unsafe_allow_html=True)
-                
-                # Format columns for display
-                opportunity_df['Current Client Rate'] = opportunity_df['Current Client Rate'].map('{:.4f}'.format)
-                opportunity_df['Industry Avg Rate'] = opportunity_df['Industry Avg Rate'].map('{:.4f}'.format)
-                opportunity_df['Projected Case Reduction'] = opportunity_df['Projected Case Reduction'].map('{:,.1f}'.format)
-
-                st.subheader("Top Opportunities to Reduce Case Load")
-                st.dataframe(
-                    opportunity_df,
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "Metric": st.column_config.TextColumn("Utilization Metric"),
-                        "Opportunity Score": st.column_config.NumberColumn(
-                            "Opportunity Score (Rank by Reduction)",
-                            help="Higher score means greater potential reduction.",
-                            format="%.1f",
-                            width="small"
-                        ),
-                    }
-                )
-    else:
-        st.info("Ensure the selected account has valid subscriber count and industry data.")
-
 st.markdown('---')
 
 st.markdown(f"""
