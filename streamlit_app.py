@@ -28,7 +28,10 @@ INDUSTRY_RISK_PROFILES = {
         "summary": "Mixed risk profile, with global supply chains. Cases often center on general travel illness and low-level security incidents (e.g., Referrals and Information & Analysis).",
         "icon": "⚙️"
     },
-    # Add more industries as needed based on your data
+    "Other Industries": {
+        "summary": "This industry shows a varied risk landscape, emphasizing general travel assistance and maintaining situational awareness through Alerts and Pre-Trip Advisories. Focus on comprehensive, generalized support.",
+        "icon": "🌍"
+    }
 }
 # --- Column Mapping ---
 COLUMN_MAP = {
@@ -137,6 +140,7 @@ def get_client_metrics(account_id, raw_df, benchmark_df):
     if industry in benchmark_df['Business_Industry'].values:
         ind_row = benchmark_df[benchmark_df['Business_Industry'] == industry].iloc[0]
     else:
+        # Fallback to general industry data if client industry is not in benchmarks
         return None
         
     metrics = {
@@ -460,46 +464,58 @@ else:
     st.info("No data available.")
 
 # --- Dynamic Industry Profile (New Element in Section 2) ---
-if sel_ind != "All Industries" and sel_ind in INDUSTRY_RISK_PROFILES:
-    st.markdown(f'<h3 style="color:{BRAND_COLOR_DARK}; margin-top: 30px;">{INDUSTRY_RISK_PROFILES[sel_ind]["icon"]} {sel_ind} Industry Risk Profile</h3>', unsafe_allow_html=True)
+if sel_ind != "All Industries":
     
-    # 1. Summary Box
-    st.info(INDUSTRY_RISK_PROFILES[sel_ind]["summary"])
+    # 1. Determine which profile to use (use fallback if specific profile is missing)
+    profile_key = sel_ind if sel_ind in INDUSTRY_RISK_PROFILES else "Other Industries"
+    profile = INDUSTRY_RISK_PROFILES[profile_key]
+    
+    st.markdown(f'<h3 style="color:{BRAND_COLOR_DARK}; margin-top: 30px;">{profile["icon"]} {sel_ind} Industry Risk Profile</h3>', unsafe_allow_html=True)
+    
+    # 2. Summary Box
+    st.info(profile["summary"])
 
-    # 2. Top 3 Case Types
-    bench_row = INDUSTRY_BENCHMARKS_DF[INDUSTRY_BENCHMARKS_DF['Business_Industry'] == sel_ind].iloc[0]
+    # 3. Top 3 Case Types
+    # Ensure the industry exists in the benchmarks before proceeding
+    bench_row_match = INDUSTRY_BENCHMARKS_DF[INDUSTRY_BENCHMARKS_DF['Business_Industry'] == sel_ind]
     
-    # Extract case rates
-    case_rates = {}
-    for col in CASE_COLUMNS:
-        friendly_name = col.replace('Medical_Cases_', 'Med - ').replace('Security_Cases_', 'Sec - ').replace('_', ' ')
-        case_rates[friendly_name] = bench_row[f"{col}_Rate"]
+    if not bench_row_match.empty:
+        bench_row = bench_row_match.iloc[0]
         
-    case_rates_df = pd.Series(case_rates).sort_values(ascending=False)
-    top_3_rates = case_rates_df.head(3)
-    
-    st.subheader("Top 3 Case Rates in this Industry (per Subscriber)")
-    
-    # Display using columns for a clean look
-    c_list = st.columns(3)
-    for i, (case_type, rate) in enumerate(top_3_rates.items()):
-        if rate > 0:
-            with c_list[i]:
-                st.markdown(f"""
-                <div style="background-color:#f0f2f6; padding:15px; border-radius:8px; height: 100%;">
-                    <p style="font-size:14px; color:{BRAND_COLOR_DARK}; margin:0; font-weight: bold;">
-                        {case_type}
-                    </p>
-                    <h3 style="color:{BRAND_COLOR_BLUE}; margin:5px 0 0;">
-                        {rate:.4f}
-                    </h3>
-                </div>
-                """, unsafe_allow_html=True)
-        else:
-             # Ensure a column is still created but remains empty if less than 3 non-zero rates
-             if i < 3: 
+        # Extract case rates
+        case_rates = {}
+        for col in CASE_COLUMNS:
+            friendly_name = col.replace('Medical_Cases_', 'Med - ').replace('Security_Cases_', 'Sec - ').replace('_', ' ')
+            case_rates[friendly_name] = bench_row[f"{col}_Rate"]
+            
+        case_rates_df = pd.Series(case_rates).sort_values(ascending=False)
+        top_3_rates = case_rates_df.head(3)
+        
+        st.subheader("Top 3 Case Rates in this Industry (per Subscriber)")
+        
+        # Display using columns for a clean look
+        c_list = st.columns(3)
+        for i, (case_type, rate) in enumerate(top_3_rates.items()):
+            if rate > 0:
                 with c_list[i]:
-                    st.empty() 
+                    st.markdown(f"""
+                    <div style="background-color:#f0f2f6; padding:15px; border-radius:8px; height: 100%;">
+                        <p style="font-size:14px; color:{BRAND_COLOR_DARK}; margin:0; font-weight: bold;">
+                            {case_type}
+                        </p>
+                        <h3 style="color:{BRAND_COLOR_BLUE}; margin:5px 0 0;">
+                            {rate:.4f}
+                        </h3>
+                    </div>
+                    """, unsafe_allow_html=True)
+            else:
+                 # Ensure a column is still created but remains empty if less than 3 non-zero rates
+                 if i < 3: 
+                    with c_list[i]:
+                        st.empty() 
+    else:
+        st.info("Industry benchmark data not available for the selected industry.")
+
 st.markdown('---')
 # --- SECTION 3: Projection ---
 st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">3. Case Projection Model</h2>', unsafe_allow_html=True)
