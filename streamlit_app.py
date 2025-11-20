@@ -4,12 +4,14 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go 
 from datetime import datetime, date
+
 # --- Global Configuration ---
 BRAND_COLOR_BLUE = "#2f4696"
 BRAND_COLOR_DARK = "#232762"
 BENCHMARK_COLOR_GOOD = "#009354"
 BENCHMARK_COLOR_BAD = "#D4002C"
 BRAND_COLOR_ORANGE = "#EF820F"
+
 # --- Hardcoded Industry Risk Profiles for Section 2 ---
 INDUSTRY_RISK_PROFILES = {
     "Technology": {
@@ -33,6 +35,7 @@ INDUSTRY_RISK_PROFILES = {
         "icon": "🌍"
     }
 }
+
 # --- Column Mapping ---
 COLUMN_MAP = {
     "Account_ID": "AccountID",
@@ -56,28 +59,31 @@ COLUMN_MAP = {
     "Security_cases_Active_Monitoring": "Security_Cases_ActiveMonitoring"
 }
 
-# Corrected CASE_COLUMNS to match internal names (InPatient vs In_Patient)
+# Corrected CASE_COLUMNS to match internal names
 CASE_COLUMNS = [
     "Travel_Cases", "Medical_Cases_IA", "Medical_Cases_OutPatient",
     "Medical_Cases_InPatient", "Medical_Cases_Evac", "Security_Cases_IA",
     "Security_Cases_Referrals", "Security_Cases_Intervention",
     "Security_Cases_Evac", "Security_Cases_ActiveMonitoring"
 ]
+
 UTIL_COLUMNS = [
     "App_and_Portal_Sessions", "Alerts_Sent_to_Travelers",
     "Pre_Trip_Advisories_Sent", "E_Learning_Completed_Courses"
 ]
+
 # Defined Case Groups for Analysis (Based on Severity)
-# Corrected HSC_COLUMNS to match internal name
 HSC_COLUMNS = [
     "Medical_Cases_InPatient", "Medical_Cases_Evac", 
     "Security_Cases_Intervention", "Security_Cases_Evac"
 ]
 LSC_COLUMNS = [c for c in CASE_COLUMNS if c not in HSC_COLUMNS]
 
+
 # --- Data Loading ---
+# Update signature to include case_cols/util_cols to force cache invalidation if definitions change
 @st.cache_data
-def load_data():
+def load_data(case_cols=CASE_COLUMNS, util_cols=UTIL_COLUMNS):
     try:
         # NOTE: Assumes 'app_raw_data.csv' is available in the environment
         df = pd.read_csv("app_raw_data.csv") 
@@ -86,27 +92,19 @@ def load_data():
         rename_dict = {}
         # 1. Build the rename dictionary based on exact or fuzzy match
         for req_col, internal in COLUMN_MAP.items():
-            found = False
             if req_col in df.columns:
                 rename_dict[req_col] = internal
-                found = True
             else:
                 # Fallback fuzzy match
                 for col in df.columns:
-                    # Simplified fuzzy match for robustness
                     if col.lower().replace(' ','').replace('_','') == req_col.lower().replace(' ','').replace('_',''):
                         rename_dict[col] = internal
-                        found = True
                         break
-            # Add a warning if a crucial column was missed during mapping, although the fix below handles this.
-            # if not found and internal in ['AccountID', 'Subscribers']:
-            #     st.warning(f"Could not find critical column: {req_col} (Internal: {internal})")
-
+        
         # 2. Apply Renaming
         df = df.rename(columns=rename_dict)
         
-        # 3. Ensure all required columns exist and handle data types (THE FIX)
-        
+        # 3. Ensure all required columns exist and handle data types
         REQUIRED_COLS = {
             'AccountID': str,
             'Subscribers': float,
@@ -115,7 +113,7 @@ def load_data():
         }
         
         # List all columns we need for cases and utilization
-        TARGET_COLS = CASE_COLUMNS + UTIL_COLUMNS
+        TARGET_COLS = case_cols + util_cols
         
         for col in REQUIRED_COLS:
             if col not in df.columns:
@@ -136,8 +134,8 @@ def load_data():
                  # Ensure existing target columns are numeric and fill NaNs
                  df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         
-        # 4. Final Calculations (These depend on all columns existing)
-        df['Total_Cases_Calculated'] = df[CASE_COLUMNS].sum(axis=1)
+        # 4. Final Calculations
+        df['Total_Cases_Calculated'] = df[case_cols].sum(axis=1)
         df['Total_HSC_Calculated'] = df[HSC_COLUMNS].sum(axis=1)
         df['Total_LSC_Calculated'] = df[LSC_COLUMNS].sum(axis=1)
         
@@ -147,17 +145,20 @@ def load_data():
              df['HSC_Per_Subscriber'] = df.apply(lambda x: x['Total_HSC_Calculated'] / x['Subscribers'] if x['Subscribers'] > 0 else 0, axis=1)
              df['LSC_Per_Subscriber'] = df.apply(lambda x: x['Total_LSC_Calculated'] / x['Subscribers'] if x['Subscribers'] > 0 else 0, axis=1)
              
-             cols_util_sum = [c for c in UTIL_COLUMNS if c in df.columns]
+             cols_util_sum = [c for c in util_cols if c in df.columns]
              df['Total_Utilization_Count'] = df[cols_util_sum].sum(axis=1)
              df['Utilization_Per_Subscriber'] = df.apply(lambda x: x['Total_Utilization_Count'] / x['Subscribers'] if x['Subscribers'] > 0 else 0, axis=1)
         return df
     except FileNotFoundError:
         st.error("Data file 'app_raw_data.csv' not found. Please ensure it is uploaded.")
         return pd.DataFrame()
-RAW_DATA_DF = load_data()
+
+RAW_DATA_DF = load_data(CASE_COLUMNS, UTIL_COLUMNS)
+
 # --- Logic Functions ---
+# Update signature to force cache invalidation if CASE_COLUMNS changes
 @st.cache_data
-def calculate_industry_averages(df):
+def calculate_industry_averages(df, case_cols=CASE_COLUMNS, util_cols=UTIL_COLUMNS):
     if df.empty: return pd.DataFrame()
     industry_groups = df.groupby('Business_Industry')
     benchmarks = []
@@ -166,19 +167,20 @@ def calculate_industry_averages(df):
         if total_sub == 0: continue
         
         data = {'Business_Industry': industry, 'Total_Subscribers_Base': total_sub}
-        for col in CASE_COLUMNS + UTIL_COLUMNS:
+        for col in case_cols + util_cols:
             data[f"{col}_Rate"] = group[col].sum() / total_sub
         
         data['Total_Cases_Rate'] = group['Total_Cases_Calculated'].sum() / total_sub
         
-        # Add industry average of Utilization_Per_Subscriber for downstream use
+        # Add industry average of Utilization_Per_Subscriber
         util_rate_col = [c for c in group.columns if c == 'Utilization_Per_Subscriber']
         if util_rate_col:
             data['Utilization_Per_Subscriber'] = group['Total_Utilization_Count'].sum() / total_sub
         
         benchmarks.append(data)
     return pd.DataFrame(benchmarks)
-INDUSTRY_BENCHMARKS_DF = calculate_industry_averages(RAW_DATA_DF)
+
+INDUSTRY_BENCHMARKS_DF = calculate_industry_averages(RAW_DATA_DF, CASE_COLUMNS, UTIL_COLUMNS)
 
 @st.cache_data
 def calculate_wfr_benchmarks(df):
@@ -227,14 +229,12 @@ def get_client_metrics(account_id, raw_df, benchmark_df):
     if industry in benchmark_df['Business_Industry'].values:
         ind_row = benchmark_df[benchmark_df['Business_Industry'] == industry].iloc[0]
     else:
-        # Fallback to general industry data if client industry is not in benchmarks
         return None
         
     metrics = {
         'Industry': industry, 'Subscribers': subs, 
         'Customer_Since': client_row['Customer_Since'],
-        'WFR': client_row['WFR'] if 'WFR' in client_row else 'N/A', # Added WFR here
-        # This dictionary comprehension now safely uses the final, guaranteed column names
+        'WFR': client_row['WFR'] if 'WFR' in client_row else 'N/A',
         'Client_Case_Totals': {col: client_row[col] for col in CASE_COLUMNS},
         'Industry_Case_Rates': {col: ind_row[f"{col}_Rate"] for col in CASE_COLUMNS}
     }
@@ -246,13 +246,12 @@ def get_client_metrics(account_id, raw_df, benchmark_df):
         i_rate = ind_row['Total_Cases_Rate']
         metrics['Case_Load_Diff'] = ((c_rate - i_rate)/i_rate)*100 if i_rate > 0 else 0
         
-        # --- START OF CHANGE: Add Client's Actual HSC/LSC Rates and Counts ---
+        # Add Client's Actual HSC/LSC Rates and Counts
         metrics['Client_HSC_Rate'] = client_row['HSC_Per_Subscriber']
         metrics['Client_LSC_Rate'] = client_row['LSC_Per_Subscriber']
-        metrics['Client_Total_Cases'] = client_row['Total_Cases_Calculated'] # Total cases count
-        metrics['Client_HSC_Count'] = client_row['Total_HSC_Calculated'] # HSC count
-        metrics['Client_LSC_Count'] = client_row['Total_LSC_Calculated'] # LSC count
-        # --- END OF CHANGE ---
+        metrics['Client_Total_Cases'] = client_row['Total_Cases_Calculated']
+        metrics['Client_HSC_Count'] = client_row['Total_HSC_Calculated']
+        metrics['Client_LSC_Count'] = client_row['Total_LSC_Calculated']
 
         util_comp = []
         for col in UTIL_COLUMNS:
@@ -264,16 +263,10 @@ def get_client_metrics(account_id, raw_df, benchmark_df):
                 'Metric': col.replace('_',' '), 'Client Rate': u_rate, 
                 'Industry Avg': ui_rate, 'Difference': diff 
             })
-            # Store raw data for any future correlation needs
-            util_data.append({
-                'Metric': col, 
-                'Client_Rate': u_rate, 
-                'Industry_Rate': ui_rate
-            })
             
         metrics['Util_Comparison'] = pd.DataFrame(util_comp)
-        metrics['Raw_Util_Rates'] = pd.DataFrame(util_data)
     return metrics
+
 def run_projection(subs, industry, bench_df):
     if bench_df.empty: return pd.DataFrame(), 0
     row = bench_df[bench_df['Business_Industry'] == industry].iloc[0]
@@ -294,12 +287,10 @@ def run_projection(subs, industry, bench_df):
 def get_impact_factor(df_industry):
     """
     Performs linear regression (Cases/Sub ~ Utilization/Sub) and returns the slope (m) and intercept (c).
-    This function is kept but no longer used in the main flow.
     """
     if df_industry.empty or len(df_industry) < 2:
-        return 0.0, 0.0 # slope, intercept
+        return 0.0, 0.0
     
-    # Filter out outliers (same as in Section 2) for a more robust fit
     util_cap = df_industry['Utilization_Per_Subscriber'].quantile(0.95)
     df_filtered = df_industry[df_industry['Utilization_Per_Subscriber'] <= util_cap].copy()
     
@@ -309,14 +300,13 @@ def get_impact_factor(df_industry):
     if len(X) < 2:
          return 0.0, 0.0
          
-    # Perform linear regression: Y = mX + c
     m, c = np.polyfit(X, Y, 1)
     return m, c
 
 def get_diff_color(val, invert=False):
-    # val is percentage (e.g. 10.0 for 10%)
     if invert: return BENCHMARK_COLOR_GOOD if val < -10 else (BENCHMARK_COLOR_BAD if val > 10 else BRAND_COLOR_BLUE)
     return BENCHMARK_COLOR_GOOD if val > 10 else (BENCHMARK_COLOR_BAD if val < -10 else BRAND_COLOR_BLUE)
+
 # --- APP LAYOUT ---
 st.set_page_config(page_title="International SOS | Benchmarking", layout="wide")
 st.markdown(f"""
@@ -326,24 +316,21 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 st.write("")
-# 1. Title Change
 st.markdown(f'<h1 style="color:{BRAND_COLOR_DARK};">Assistance Services Benchmarking Report</h1>', unsafe_allow_html=True)
 st.write("Compare client assistance activity against industry peers.")
 st.markdown('---')
+
 # Section 1
-# 2. Section 1 Title Change + Subtitle
 st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">1. Existing Client Utilization and Benchmarking Analysis</h2>', unsafe_allow_html=True)
-st.markdown("**(Actual activity for a 12-month period)**") # Subtitle added here
+st.markdown("**(Actual activity for a 12-month period)**")
 if RAW_DATA_DF.empty: st.stop()
-# Ensure IDs are sorted for easy typing/searching
+
 ids = sorted(RAW_DATA_DF['AccountID'].unique())
-# Initialize sel_id, metrics globally for downstream use
 sel_id = "Select here..."
 metrics = None
 if 'sel_id_input' not in st.session_state:
     st.session_state.sel_id_input = "Select here..."
     
-# Updated to use st.selectbox, which supports typing to filter/search
 sel_id = st.selectbox(
     "1.1 Select Account ID (Start typing to search)", 
     ["Select here..."] + ids, 
@@ -383,42 +370,32 @@ if sel_id != "Select here...":
             total_cases = 0
             if 'Client_Case_Totals' in metrics:
                 for k, v in metrics['Client_Case_Totals'].items():
-                    # Populate data for the breakdown table
                     bd_data.append({'Case Type': k.replace('Medical_Cases_', 'Med - ').replace('Security_Cases_', 'Sec - ').replace('_', ' '), 'Cases': v})
                     total_cases += v
             
             bd_df = pd.DataFrame(bd_data)
-            
-            # Filter to show only cases > 0
             bd_df_filtered = bd_df[bd_df['Cases'] > 0].copy() 
             
             if not bd_df_filtered.empty or total_cases > 0:
                 tot = total_cases
-                
-                # Format % of Total based on the grand total
                 if tot > 0:
                     bd_df_filtered['% of Total'] = (bd_df_filtered['Cases'] / tot * 100).map('{:.1f}%'.format)
                 else:
                     bd_df_filtered['% of Total'] = '0.0%'
                     
-                # Add Total Row
                 total_row = pd.DataFrame([{
                     'Case Type': 'Total Cases', 
                     'Cases': tot, 
                     '% of Total': '100.0%' if tot > 0 else '0.0%'
                 }])
                 
-                # Concatenate the total row to the filtered breakdown data
                 bd_df_final = pd.concat([bd_df_filtered, total_row], ignore_index=True)
                 
-                # Styling function to bold the last row (Total Cases)
                 def style_total_row(row):
                     is_total = row['Case Type'] == 'Total Cases'
-                    # Apply a lighter background to the total row
                     styles = ['font-weight: bold; background-color: #e6e6e6;'] * len(row) 
                     return styles if is_total else [''] * len(row)
                 
-                # 3. Client Case Breakdown Title Change
                 st.subheader("Actual Client Cases by Type")
                 st.dataframe(
                     bd_df_final.style.apply(style_total_row, axis=1),
@@ -428,9 +405,7 @@ if sel_id != "Select here...":
             else:
                 st.info("No cases recorded.")
         
-        # --- CHART: Case Rate Comparison ---
         st.write("")
-        # 4. Case Rate Comparison Title Change
         st.subheader("Case Rate Frequency compared to Industry Average")
         
         chart_data = []
@@ -447,8 +422,6 @@ if sel_id != "Select here...":
             if not chart_df.empty:
                 fig_compare = go.Figure()
                 fig_compare.add_trace(go.Bar(x=chart_df['Case Type'], y=chart_df['Client Rate (per 1k)'], name='Client Rate', marker_color=BRAND_COLOR_BLUE))
-                
-                # Industry Average Line (Red Dashed)
                 fig_compare.add_trace(go.Scatter(
                     x=chart_df['Case Type'], 
                     y=chart_df['Industry Rate (per 1k)'],
@@ -463,21 +436,15 @@ if sel_id != "Select here...":
             else:
                 st.info("No significant data.")
         st.write("")
-        # 5. Utilization Analysis Title Change
         st.markdown(f'<h3 style="color:{BRAND_COLOR_DARK};">Digital Utilization by Type</h3>', unsafe_allow_html=True)
         if 'Util_Comparison' in metrics:
             udf = metrics['Util_Comparison']
-            
-            # Pre-format columns to strings to avoid Streamlit formatting errors
             udf['Client Rate'] = udf['Client Rate'].map('{:.4f}'.format)
             udf['Industry Avg'] = udf['Industry Avg'].map('{:.4f}'.format)
-            
-            # Store raw difference for color logic before formatting
             diff_values = udf['Difference'].copy()
             udf['Difference'] = udf['Difference'].map('{:+.1f}%'.format)
             
             def style_util(row):
-                # Access original numeric value via index if possible, or re-parse
                 val = diff_values[row.name]
                 color = get_diff_color(val, invert=False)
                 return [f'color: {color}; font-weight: bold' if col == 'Difference' else '' for col in row.index]
@@ -487,13 +454,11 @@ if sel_id != "Select here...":
                 hide_index=True
             )
 st.markdown('---')
+
 # --- SECTION 2: CORRELATION GRAPH ---
-# 6. Correlation Section Title Change
 st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">2. Digital and Case Utilization Benchmarking</h2>', unsafe_allow_html=True)
-# 7. Correlation Subtext Change
 st.write("Compare digital utilization (alerts, app + portal use, eLearning, etc) against Assistance case utilization, by subscriber population. Outliers (top 5%) have been removed")
 inds = sorted(RAW_DATA_DF['Business_Industry'].dropna().unique().tolist())
-# Initialize sel_ind globally
 sel_ind = "All Industries"
 if 'sel_ind_chart' not in st.session_state:
     st.session_state.sel_ind_chart = "All Industries"
@@ -504,17 +469,14 @@ plot_df = RAW_DATA_DF[RAW_DATA_DF['Subscribers'] > 0].copy()
 if sel_ind != "All Industries":
     plot_df = plot_df[plot_df['Business_Industry'] == sel_ind]
 
-# Calculate filtered data (excluding top 5% of utilization for visualization consistency)
 if not plot_df.empty:
     util_cap = plot_df['Utilization_Per_Subscriber'].quantile(0.95)
     plot_df_filtered = plot_df[plot_df['Utilization_Per_Subscriber'] <= util_cap].copy()
 else:
     plot_df_filtered = pd.DataFrame()
     
-# Highlight selected client if applicable
 if sel_id != "Select here...":
     sel_row = RAW_DATA_DF[RAW_DATA_DF['AccountID'] == str(sel_id)]
-    # Only concatenate if the client is not already in the filtered set (i.e., they are an outlier)
     if not sel_row.empty and str(sel_id) not in plot_df_filtered['AccountID'].values:
              plot_df_filtered = pd.concat([plot_df_filtered, sel_row])
              
@@ -524,26 +486,18 @@ else:
     plot_df_filtered['Client_Type'] = 'All Clients'
     cmap = {'All Clients': BRAND_COLOR_BLUE}
 
-# 8. X-Axis Label Change & 9. Y-Axis Label Change
 X_AXIS_LABEL = "Digital Utilization/Subscriber"
 Y_AXIS_LABEL = "Case Utilization/Subscriber"
 
 if not plot_df_filtered.empty:
-    # Calculate trendline data and draw it if a specific industry is selected
     if len(plot_df) >= 2 and sel_ind != "All Industries":
-        # Calculate slope and intercept for the selected industry (using the original, non-highlighted data)
         trend_m, trend_c = get_impact_factor(plot_df)
-        
-        # Create a trend line
         x_min = plot_df['Utilization_Per_Subscriber'].min()
         x_max = plot_df['Utilization_Per_Subscriber'].max()
         x_range = np.linspace(x_min, x_max, 100)
         y_trend = trend_m * x_range + trend_c
-        
-        # Ensure trendline points are positive for plotting context
         y_trend = np.maximum(y_trend, 0)
 
-        # Create the initial scatter plot
         fig = px.scatter(
             plot_df_filtered, x="Utilization_Per_Subscriber", y="Cases_Per_Subscriber",
             color="Client_Type", color_discrete_map=cmap,
@@ -551,8 +505,6 @@ if not plot_df_filtered.empty:
             labels={"Utilization_Per_Subscriber": X_AXIS_LABEL, "Cases_Per_Subscriber": Y_AXIS_LABEL},
             height=500
         )
-        
-        # Add trendline to the scatter plot
         fig.add_trace(go.Scatter(x=x_range, y=y_trend, mode='lines', 
                                  name=f'Trend Line (m={trend_m:+.4f})', 
                                  line=dict(color=BRAND_COLOR_DARK, width=2, dash='dot')))
@@ -572,25 +524,19 @@ if not plot_df_filtered.empty:
 else:
     st.info("No data available.")
 
-# --- Dynamic Industry Profile (New Element in Section 2) ---
 if sel_ind != "All Industries":
-    
-    # 1. Determine which profile to use (use fallback if specific profile is missing)
     profile_key = sel_ind if sel_ind in INDUSTRY_RISK_PROFILES else "Other Industries"
     profile = INDUSTRY_RISK_PROFILES[profile_key]
     
     st.markdown(f'<h3 style="color:{BRAND_COLOR_DARK}; margin-top: 30px;">{profile["icon"]} {sel_ind} Industry Risk Profile</h3>', unsafe_allow_html=True)
-    
-    # 2. Summary Box
     st.info(profile["summary"])
 
 st.markdown('---')
+
 # --- SECTION 3: Projection ---
-# 11. Section 3 Title Change
 st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">3. New Client or Annual Cases Forecast</h2>', unsafe_allow_html=True)
 c1, c2 = st.columns(2)
 with c1:
-    # Default to the industry selected in the chart if one is selected
     default_ind = sel_ind if sel_ind != "All Industries" and sel_ind is not None else (metrics['Industry'] if metrics else None)
     
     if not INDUSTRY_BENCHMARKS_DF.empty:
@@ -611,10 +557,8 @@ if p_ind and p_sub > 0 and not INDUSTRY_BENCHMARKS_DF.empty:
     with m_col: st.metric("Projected Annual Cases", f"{tot_p:,.1f}")
     with t_col: 
         pdf = pdf[pdf['Projected Cases'] > 0.01]
-        # Pre-format as strings to avoid errors
         pdf['Projected Cases'] = pdf['Projected Cases'].map('{:,.1f}'.format)
         pdf['% of Total'] = pdf['% of Total'].map('{:.1f}%'.format)
-        
         st.dataframe(
             pdf,
             use_container_width=True,
@@ -625,28 +569,23 @@ st.markdown('---')
 # --- NEW SECTION 4: WFR TIER COMPARISON (NOW PERSONALIZED) ---
 st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">4. WFR Tier Case Rate Comparison</h2>', unsafe_allow_html=True)
 
-# 1. Define the minimum threshold for showing the entire section
 MIN_CASE_THRESHOLD = 10 
 
 if metrics and WFR_BENCHMARKS and metrics.get('WFR') in ['WFR1', 'WFR2', 'WFR3']:
     
     client_total_cases = metrics.get('Client_Total_Cases', 0)
     
-    # Rule 1: Remove entire section if total cases are too low
     if client_total_cases < MIN_CASE_THRESHOLD:
         st.info(f"WFR Tier Comparison is not shown because the selected client has less than {MIN_CASE_THRESHOLD} total cases ({client_total_cases:.0f} cases). Data is too small to draw reliable conclusions.")
     
     else:
-        # Proceed with WFR Analysis
         current_wfr = metrics.get('WFR', 'N/A')
         
-        # Get client case data
         client_hsc_rate = metrics.get('Client_HSC_Rate', 0)
         client_lsc_rate = metrics.get('Client_LSC_Rate', 0)
         client_hsc_count = metrics.get('Client_HSC_Count', 0)
         client_lsc_count = metrics.get('Client_LSC_Count', 0)
 
-        # Determine which tiers to compare
         if current_wfr == 'WFR3' and 'WFR1&2' in WFR_BENCHMARKS:
             current_tier = 'WFR3'
             comparison_tier = 'WFR1&2'
@@ -655,40 +594,27 @@ if metrics and WFR_BENCHMARKS and metrics.get('WFR') in ['WFR1', 'WFR2', 'WFR3']
             comparison_tier = 'WFR3'
         else:
             st.info(f"Client **{sel_id}** is on tier **{current_wfr}** but the benchmark data for the comparison tier is unavailable in the dataset.")
-            # Note: This scenario bypasses the initial 10 case check, but that's acceptable.
-            # However, if this triggers, we exit the logic block and the rest of the section won't draw.
             st.stop()
             
-        # Get rates for the comparison tier (the 'New Value')
         comp_rates = WFR_BENCHMARKS[comparison_tier]
 
         def calculate_personalized_rate_change(client_rate, comp_bench_rate):
-            """
-            Calculates % change using client's actual rate as the original value.
-            Change = (Benchmark_New - Client_Actual) / Client_Actual * 100
-            Handles zero division by returning 0.0 or a large number for extreme risk.
-            """
             if client_rate <= 0:
                  if comp_bench_rate > 0:
-                     return 1000.0 # Extreme Shift/Risk (e.g., going from 0 cases to the benchmark rate)
+                     return 1000.0 
                  return 0.0 
-            
             return ((comp_bench_rate - client_rate) / client_rate) * 100
 
-        # Personalized Calculations
         hsc_change = calculate_personalized_rate_change(client_hsc_rate, comp_rates['HSC_Rate'])
         lsc_change = calculate_personalized_rate_change(client_lsc_rate, comp_rates['LSC_Rate'])
 
-        # Determine visual colors and text based on the change and narrative (risk vs benefit)
         is_upgrade = current_tier == 'WFR1&2'
         outlier_warning = False
         
-        # Initialize LSC variables
         lsc_label = "Low Severity Case Rate Change"
         lsc_color = BRAND_COLOR_BLUE 
         
         if is_upgrade:
-            # Client is WFR1&2, comparing to WFR3 (upgrade scenario = look for reduction/negative change)
             main_text = f"If client upgraded to the **{comparison_tier}** service level, the benchmark comparison projects:"
             hsc_label = "High Severity Case Rate Reduction Potential"
             
@@ -699,7 +625,6 @@ if metrics and WFR_BENCHMARKS and metrics.get('WFR') in ['WFR1', 'WFR2', 'WFR3']
                  hsc_label = "HSC Rate is already near/better than WFR3 Benchmark"
                  
         else:
-            # Client is WFR3, comparing to WFR1&2 (downgrade scenario = look for increase/positive change)
             main_text = f"If client downgraded to the **{comparison_tier}** service level, the benchmark comparison projects:"
             
             if hsc_change > 0:
@@ -711,18 +636,15 @@ if metrics and WFR_BENCHMARKS and metrics.get('WFR') in ['WFR1', 'WFR2', 'WFR3']
                 hsc_color = BENCHMARK_COLOR_BAD
                 outlier_warning = True
         
-        # Apply LSC specific logic based on Outlier Warning
         if outlier_warning:
             lsc_color = BENCHMARK_COLOR_BAD
         
         st.write(f"The selected client (**{current_wfr}**) is compared against the industry average case rates for the comparison WFR tier. **The calculation uses the client's actual case rates as the baseline.**")
         st.markdown(f"### {main_text}")
 
-        # Display Outlier Warning if necessary
         if outlier_warning:
             st.warning(f"**Warning:** The client's current actual HSC rate ({client_hsc_rate:.4f}) is already equal to or worse than the benchmark rate of the lower tier ({comp_rates['HSC_Rate']:.4f}). This indicates the client is currently an outlier and faces extreme risk if coverage is reduced.")
 
-        # Display the two-point scale/difference visual
         c1, c2, c3 = st.columns([1, 0.2, 1])
         
         with c1:
@@ -742,12 +664,10 @@ if metrics and WFR_BENCHMARKS and metrics.get('WFR') in ['WFR1', 'WFR2', 'WFR3']
             """, unsafe_allow_html=True)
         
         st.markdown("---")
-        
         st.markdown("### Projected Case Rate Impact (Per Subscriber)")
         
         col_hsc, col_lsc = st.columns(2)
         
-        # --- Rule 2: High Severity Case (HSC) Impact ---
         with col_hsc:
             if client_hsc_count > 0:
                 display_hsc_change = f"{hsc_change:+.1f}%" if hsc_change < 1000 else "Extreme Risk"
@@ -765,10 +685,8 @@ if metrics and WFR_BENCHMARKS and metrics.get('WFR') in ['WFR1', 'WFR2', 'WFR3']
                 </div>
                 """, unsafe_allow_html=True)
             else:
-                # Display informational message if client has 0 HSC cases
                  st.info(f"Client has 0 High Severity Cases (HSC). Comparison rate is {comp_rates['HSC_Rate']:.4f}.")
         
-        # --- Rule 2: Low Severity Case (LSC) Impact ---
         with col_lsc:
             if client_lsc_count > 0:
                 display_lsc_change = f"{lsc_change:+.1f}%" if lsc_change < 1000 else "Extreme Shift"
@@ -785,7 +703,6 @@ if metrics and WFR_BENCHMARKS and metrics.get('WFR') in ['WFR1', 'WFR2', 'WFR3']
                 </div>
                 """, unsafe_allow_html=True)
             else:
-                 # Display informational message if client has 0 LSC cases
                  st.info(f"Client has 0 Low Severity Cases (LSC). Comparison rate is {comp_rates['LSC_Rate']:.4f}.")
         
 elif not WFR_BENCHMARKS:
