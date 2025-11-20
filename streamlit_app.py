@@ -433,7 +433,7 @@ st.markdown('---')
 
 # --- SECTION 2: CORRELATION GRAPH ---
 st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">2. Digital and Case Utilization Benchmarking</h2>', unsafe_allow_html=True)
-st.write("Compare digital utilization (alerts, app + portal use, eLearning, etc) against Assistance case utilization, by subscriber population. Outliers (top 5%) have been removed")
+st.write("Compare digital utilization (alerts, app + portal use, eLearning, etc) against Assistance case utilization, by subscriber population. Outliers (top 10%) have been removed")
 inds = sorted(RAW_DATA_DF['Business_Industry'].dropna().unique().tolist())
 sel_ind = "All Industries"
 if 'sel_ind_chart' not in st.session_state:
@@ -446,9 +446,9 @@ if sel_ind != "All Industries":
     plot_df = plot_df[plot_df['Business_Industry'] == sel_ind]
 
 if not plot_df.empty:
-    # Calculate 95th percentile cap per industry to remove outliers locally
-    industry_caps = plot_df.groupby('Business_Industry')['Utilization_Per_Subscriber'].transform(lambda x: x.quantile(0.95))
-    # Filter rows where utilization is within the 95th percentile of their specific industry
+    # Calculate 90th percentile cap per industry to remove outliers locally
+    industry_caps = plot_df.groupby('Business_Industry')['Utilization_Per_Subscriber'].transform(lambda x: x.quantile(0.90))
+    # Filter rows where utilization is within the 90th percentile of their specific industry
     plot_df_filtered = plot_df[plot_df['Utilization_Per_Subscriber'] <= industry_caps].copy()
 else:
     plot_df_filtered = pd.DataFrame()
