@@ -571,7 +571,8 @@ st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">4. WFR Tier Case Rate Compar
 
 MIN_CASE_THRESHOLD = 10 
 
-if metrics and WFR_BENCHMARKS and metrics.get('WFR') in ['WFR1', 'WFR2', 'WFR3']:
+# Allow Non-WFR clients to proceed by checking only for benchmarks
+if metrics and WFR_BENCHMARKS:
     
     client_total_cases = metrics.get('Client_Total_Cases', 0)
     
@@ -586,15 +587,25 @@ if metrics and WFR_BENCHMARKS and metrics.get('WFR') in ['WFR1', 'WFR2', 'WFR3']
         client_hsc_count = metrics.get('Client_HSC_Count', 0)
         client_lsc_count = metrics.get('Client_LSC_Count', 0)
 
-        if current_wfr == 'WFR3' and 'WFR1&2' in WFR_BENCHMARKS:
+        # Logic to handle Non-WFR clients: Default to upgrade path to WFR3
+        if current_wfr == 'WFR3':
             current_tier = 'WFR3'
             comparison_tier = 'WFR1&2'
-        elif current_wfr in ['WFR1', 'WFR2'] and 'WFR3' in WFR_BENCHMARKS:
+            is_upgrade = False
+        elif current_wfr in ['WFR1', 'WFR2']:
             current_tier = 'WFR1&2'
             comparison_tier = 'WFR3'
+            is_upgrade = True
         else:
-            st.info(f"Client **{sel_id}** is on tier **{current_wfr}** but the benchmark data for the comparison tier is unavailable in the dataset.")
-            st.stop()
+            # Non-WFR or other tiers -> Treat as upgrade to WFR3
+            current_tier = str(current_wfr) # Display actual label (e.g. 'Non-WFR')
+            comparison_tier = 'WFR3'
+            is_upgrade = True
+
+        # Ensure comparison tier exists in benchmarks
+        if comparison_tier not in WFR_BENCHMARKS:
+             st.info(f"Benchmark data for {comparison_tier} is unavailable in the dataset.")
+             st.stop()
             
         comp_rates = WFR_BENCHMARKS[comparison_tier]
 
@@ -608,13 +619,12 @@ if metrics and WFR_BENCHMARKS and metrics.get('WFR') in ['WFR1', 'WFR2', 'WFR3']
         hsc_change = calculate_personalized_rate_change(client_hsc_rate, comp_rates['HSC_Rate'])
         lsc_change = calculate_personalized_rate_change(client_lsc_rate, comp_rates['LSC_Rate'])
 
-        is_upgrade = current_tier == 'WFR1&2'
         outlier_warning = False
-        
         lsc_label = "Low Severity Case Rate Change"
         lsc_color = BRAND_COLOR_BLUE 
         
         if is_upgrade:
+            # Upgrading to WFR3 (Applies to WFR1/2 and Non-WFR)
             main_text = f"If client upgraded to the **{comparison_tier}** service level, the benchmark comparison projects:"
             hsc_label = "High Severity Case Rate Reduction Potential"
             
@@ -625,6 +635,7 @@ if metrics and WFR_BENCHMARKS and metrics.get('WFR') in ['WFR1', 'WFR2', 'WFR3']
                  hsc_label = "HSC Rate is already near/better than WFR3 Benchmark"
                  
         else:
+            # Downgrading from WFR3
             main_text = f"If client downgraded to the **{comparison_tier}** service level, the benchmark comparison projects:"
             
             if hsc_change > 0:
@@ -709,8 +720,6 @@ elif not WFR_BENCHMARKS:
     st.info("WFR tier benchmarking data could not be calculated. The dataset requires WFR1, WFR2, and WFR3 clients to establish a comparison base.")
 elif not metrics:
     st.info("Please select a client in Section 1 to view the WFR Tier Comparison.")
-elif metrics.get('WFR') not in ['WFR1', 'WFR2', 'WFR3']:
-    st.info(f"The selected client (**{metrics.get('WFR')}**) is not in a WFR tier eligible for this comparison (WFR1, WFR2, or WFR3).")
 
 
 st.markdown('---')
