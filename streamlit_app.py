@@ -55,9 +55,11 @@ COLUMN_MAP = {
     "Security_cases_Evacuation": "Security_Cases_Evac",
     "Security_cases_Active_Monitoring": "Security_Cases_ActiveMonitoring"
 }
+
+# Corrected CASE_COLUMNS to match internal names (InPatient vs In_Patient)
 CASE_COLUMNS = [
     "Travel_Cases", "Medical_Cases_IA", "Medical_Cases_OutPatient",
-    "Medical_Cases_In_Patient", "Medical_Cases_Evac", "Security_Cases_IA",
+    "Medical_Cases_InPatient", "Medical_Cases_Evac", "Security_Cases_IA",
     "Security_Cases_Referrals", "Security_Cases_Intervention",
     "Security_Cases_Evac", "Security_Cases_ActiveMonitoring"
 ]
@@ -66,8 +68,9 @@ UTIL_COLUMNS = [
     "Pre_Trip_Advisories_Sent", "E_Learning_Completed_Courses"
 ]
 # Defined Case Groups for Analysis (Based on Severity)
+# Corrected HSC_COLUMNS to match internal name
 HSC_COLUMNS = [
-    "Medical_Cases_In_Patient", "Medical_Cases_Evac", 
+    "Medical_Cases_InPatient", "Medical_Cases_Evac", 
     "Security_Cases_Intervention", "Security_Cases_Evac"
 ]
 LSC_COLUMNS = [c for c in CASE_COLUMNS if c not in HSC_COLUMNS]
