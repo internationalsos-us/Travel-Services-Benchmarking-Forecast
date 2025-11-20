@@ -12,30 +12,6 @@ BENCHMARK_COLOR_GOOD = "#009354"
 BENCHMARK_COLOR_BAD = "#D4002C"
 BRAND_COLOR_ORANGE = "#EF820F"
 
-# --- Hardcoded Industry Risk Profiles for Section 2 ---
-INDUSTRY_RISK_PROFILES = {
-    "Technology": {
-        "summary": "High volume, low-risk travel. Focus is typically on general medical assistance, minimizing travel disruption, and ensuring high utilization of digital resources like the App/Portal for pre-trip planning.",
-        "icon": "📱"
-    },
-    "Energy & Mining": {
-        "summary": "High-risk, remote deployments. Case severity is often high, with a focus on Medical Evacuation (high cost/low frequency) and robust security services (e.g., Security Intervention and Active Monitoring).",
-        "icon": "⛏️"
-    },
-    "Financial Services": {
-        "summary": "High-frequency business travel in established locations. Key risks involve security concerns in politically unstable regions and high-value personnel needing rapid, discreet support.",
-        "icon": "🏦"
-    },
-    "Manufacturing": {
-        "summary": "Mixed risk profile, with global supply chains. Cases often center on general travel illness and low-level security incidents (e.g., Referrals and Information & Analysis).",
-        "icon": "⚙️"
-    },
-    "Other Industries": {
-        "summary": "This industry shows a varied risk landscape, emphasizing general travel assistance and maintaining situational awareness through Alerts and Pre-Trip Advisories. Focus on comprehensive, generalized support.",
-        "icon": "🌍"
-    }
-}
-
 # --- Column Mapping ---
 COLUMN_MAP = {
     "Account_ID": "AccountID",
@@ -470,13 +446,17 @@ if sel_ind != "All Industries":
     plot_df = plot_df[plot_df['Business_Industry'] == sel_ind]
 
 if not plot_df.empty:
-    util_cap = plot_df['Utilization_Per_Subscriber'].quantile(0.95)
-    plot_df_filtered = plot_df[plot_df['Utilization_Per_Subscriber'] <= util_cap].copy()
+    # Calculate 95th percentile cap per industry to remove outliers locally
+    industry_caps = plot_df.groupby('Business_Industry')['Utilization_Per_Subscriber'].transform(lambda x: x.quantile(0.95))
+    # Filter rows where utilization is within the 95th percentile of their specific industry
+    plot_df_filtered = plot_df[plot_df['Utilization_Per_Subscriber'] <= industry_caps].copy()
 else:
     plot_df_filtered = pd.DataFrame()
     
 if sel_id != "Select here...":
     sel_row = RAW_DATA_DF[RAW_DATA_DF['AccountID'] == str(sel_id)]
+    # If client exists but is missing from filtered set (either due to being an outlier or different industry selection)
+    # add them back to ensure they are visible on the chart.
     if not sel_row.empty and str(sel_id) not in plot_df_filtered['AccountID'].values:
              plot_df_filtered = pd.concat([plot_df_filtered, sel_row])
              
@@ -523,13 +503,6 @@ if not plot_df_filtered.empty:
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("No data available.")
-
-if sel_ind != "All Industries":
-    profile_key = sel_ind if sel_ind in INDUSTRY_RISK_PROFILES else "Other Industries"
-    profile = INDUSTRY_RISK_PROFILES[profile_key]
-    
-    st.markdown(f'<h3 style="color:{BRAND_COLOR_DARK}; margin-top: 30px;">{profile["icon"]} {sel_ind} Industry Risk Profile</h3>', unsafe_allow_html=True)
-    st.info(profile["summary"])
 
 st.markdown('---')
 
