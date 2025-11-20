@@ -333,7 +333,7 @@ if sel_id != "Select here...":
         with cc1:
             st.markdown(f"""
             <div style="background-color:#f0f2f6; padding:20px; border-radius:10px; text-align:center;">
-                <h3 style="margin:0; color:{BRAND_COLOR_DARK}">Total Case Load</h3>
+                <h3 style="margin:0; color:{BRAND_COLOR_DARK}">Total Case Rate Load</h3>
                 <h1 style="font-size:48px; margin:10px 0; color:{col}">{abs(diff):.1f}%</h1>
                 <p style="font-size:18px; font-weight:bold; color:{col}">
                     {'BELOW' if diff < 0 else 'ABOVE'} Industry Avg
@@ -436,14 +436,37 @@ st.markdown(f'<h2 style="color:{BRAND_COLOR_BLUE};">2. Digital and Case Utilizat
 st.write("Compare digital utilization (alerts, app + portal use, eLearning, etc) against Assistance case utilization, by subscriber population. Outliers (top 10%) have been removed")
 inds = sorted(RAW_DATA_DF['Business_Industry'].dropna().unique().tolist())
 sel_ind = "All Industries"
+
+# Use columns for filters
+col_filter1, col_filter2 = st.columns(2)
+
 if 'sel_ind_chart' not in st.session_state:
     st.session_state.sel_ind_chart = "All Industries"
-    
-sel_ind = st.selectbox("Filter Chart by Industry", ["All Industries"] + inds, key='sel_ind_chart')
+
+with col_filter1:
+    sel_ind = st.selectbox("Filter Chart by Industry", ["All Industries"] + inds, key='sel_ind_chart')
+
+with col_filter2:
+    size_options = ["All sizes", "0-250", "250-1000", "1000-5000", "5000-10000", "10000+"]
+    sel_size = st.selectbox("Filter Chart by Subscriber Size", size_options)
 
 plot_df = RAW_DATA_DF[RAW_DATA_DF['Subscribers'] > 0].copy()
+
+# Apply Industry Filter
 if sel_ind != "All Industries":
     plot_df = plot_df[plot_df['Business_Industry'] == sel_ind]
+
+# Apply Subscriber Size Filter
+if sel_size == "0-250":
+    plot_df = plot_df[(plot_df['Subscribers'] >= 0) & (plot_df['Subscribers'] < 250)]
+elif sel_size == "250-1000":
+    plot_df = plot_df[(plot_df['Subscribers'] >= 250) & (plot_df['Subscribers'] < 1000)]
+elif sel_size == "1000-5000":
+    plot_df = plot_df[(plot_df['Subscribers'] >= 1000) & (plot_df['Subscribers'] < 5000)]
+elif sel_size == "5000-10000":
+    plot_df = plot_df[(plot_df['Subscribers'] >= 5000) & (plot_df['Subscribers'] < 10000)]
+elif sel_size == "10000+":
+    plot_df = plot_df[plot_df['Subscribers'] >= 10000]
 
 if not plot_df.empty:
     # Revised Outlier Logic: Use global or industry-specific 90th percentile based on view
@@ -457,6 +480,8 @@ else:
     
 if sel_id != "Select here...":
     sel_row = RAW_DATA_DF[RAW_DATA_DF['AccountID'] == str(sel_id)]
+    # If client exists but is missing from filtered set (either due to being an outlier or different industry selection)
+    # add them back to ensure they are visible on the chart.
     if not sel_row.empty and str(sel_id) not in plot_df_filtered['AccountID'].values:
              plot_df_filtered = pd.concat([plot_df_filtered, sel_row])
              
@@ -470,10 +495,13 @@ X_AXIS_LABEL = "Digital Utilization/Subscriber"
 Y_AXIS_LABEL = "Case Utilization/Subscriber"
 
 if not plot_df_filtered.empty:
-    if len(plot_df) >= 2 and sel_ind != "All Industries":
-        trend_m, trend_c = get_impact_factor(plot_df)
-        x_min = plot_df['Utilization_Per_Subscriber'].min()
-        x_max = plot_df['Utilization_Per_Subscriber'].max()
+    # Calculate trend line only if there's enough data
+    # Use filtered data for trend line to match visual scale, or original plot_df if preferred (usually filtered is better for visual trend)
+    # Here using filtered to match what user sees
+    if len(plot_df_filtered) >= 2: 
+        trend_m, trend_c = get_impact_factor(plot_df_filtered) 
+        x_min = plot_df_filtered['Utilization_Per_Subscriber'].min()
+        x_max = plot_df_filtered['Utilization_Per_Subscriber'].max()
         x_range = np.linspace(x_min, x_max, 100)
         y_trend = trend_m * x_range + trend_c
         y_trend = np.maximum(y_trend, 0)
@@ -488,7 +516,6 @@ if not plot_df_filtered.empty:
         fig.add_trace(go.Scatter(x=x_range, y=y_trend, mode='lines', 
                                  name=f'Trend Line (m={trend_m:+.4f})', 
                                  line=dict(color=BRAND_COLOR_DARK, width=2, dash='dot')))
-                              
     else:
          fig = px.scatter(
             plot_df_filtered, x="Utilization_Per_Subscriber", y="Cases_Per_Subscriber",
@@ -502,7 +529,7 @@ if not plot_df_filtered.empty:
     fig.update_layout(legend_title_text="")
     st.plotly_chart(fig, use_container_width=True)
 else:
-    st.info("No data available.")
+    st.info("No data available for the selected filters.")
 
 st.markdown('---')
 
