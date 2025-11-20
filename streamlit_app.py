@@ -446,15 +446,15 @@ if sel_ind != "All Industries":
     plot_df = plot_df[plot_df['Business_Industry'] == sel_ind]
 
 if not plot_df.empty:
-    # Calculate 90th percentile cap per industry for BOTH metrics (Util and Cases)
-    # This ensures visually that we zoom in on the 'normal' distribution box
-    grouper = plot_df.groupby('Business_Industry')
+    # REVISED OUTLIER LOGIC: 
+    # Use Global 90th percentile if 'All Industries' is selected to flatten visual distribution.
+    # Use Industry-specific 90th percentile if a specific industry is selected.
+    # Note: plot_df is already filtered to the selected industry if sel_ind != "All Industries"
     
-    util_caps = grouper['Utilization_Per_Subscriber'].transform(lambda x: x.quantile(0.90))
-    case_caps = grouper['Cases_Per_Subscriber'].transform(lambda x: x.quantile(0.90))
+    util_cap = plot_df['Utilization_Per_Subscriber'].quantile(0.90)
+    case_cap = plot_df['Cases_Per_Subscriber'].quantile(0.90)
     
-    # Filter rows where BOTH utilization AND case rates are within the 90th percentile
-    mask = (plot_df['Utilization_Per_Subscriber'] <= util_caps) & (plot_df['Cases_Per_Subscriber'] <= case_caps)
+    mask = (plot_df['Utilization_Per_Subscriber'] <= util_cap) & (plot_df['Cases_Per_Subscriber'] <= case_cap)
     plot_df_filtered = plot_df[mask].copy()
 else:
     plot_df_filtered = pd.DataFrame()
@@ -509,6 +509,19 @@ if not plot_df_filtered.empty:
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("No data available.")
+
+# --- Dynamic Industry Profile (New Element in Section 2) ---
+# Only show specific profile if a specific industry is selected
+if sel_ind != "All Industries":
+    
+    # 1. Determine which profile to use (use fallback if specific profile is missing)
+    profile_key = sel_ind if sel_ind in INDUSTRY_RISK_PROFILES else "Other Industries"
+    profile = INDUSTRY_RISK_PROFILES[profile_key]
+    
+    st.markdown(f'<h3 style="color:{BRAND_COLOR_DARK}; margin-top: 30px;">{profile["icon"]} {sel_ind} Industry Risk Profile</h3>', unsafe_allow_html=True)
+    
+    # 2. Summary Box
+    st.info(profile["summary"])
 
 st.markdown('---')
 
