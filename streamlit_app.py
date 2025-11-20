@@ -446,10 +446,16 @@ if sel_ind != "All Industries":
     plot_df = plot_df[plot_df['Business_Industry'] == sel_ind]
 
 if not plot_df.empty:
-    # Calculate 90th percentile cap per industry to remove outliers locally
-    industry_caps = plot_df.groupby('Business_Industry')['Utilization_Per_Subscriber'].transform(lambda x: x.quantile(0.90))
-    # Filter rows where utilization is within the 90th percentile of their specific industry
-    plot_df_filtered = plot_df[plot_df['Utilization_Per_Subscriber'] <= industry_caps].copy()
+    # Calculate 90th percentile cap per industry for BOTH metrics (Util and Cases)
+    # This ensures visually that we zoom in on the 'normal' distribution box
+    grouper = plot_df.groupby('Business_Industry')
+    
+    util_caps = grouper['Utilization_Per_Subscriber'].transform(lambda x: x.quantile(0.90))
+    case_caps = grouper['Cases_Per_Subscriber'].transform(lambda x: x.quantile(0.90))
+    
+    # Filter rows where BOTH utilization AND case rates are within the 90th percentile
+    mask = (plot_df['Utilization_Per_Subscriber'] <= util_caps) & (plot_df['Cases_Per_Subscriber'] <= case_caps)
+    plot_df_filtered = plot_df[mask].copy()
 else:
     plot_df_filtered = pd.DataFrame()
     
